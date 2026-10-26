@@ -1,0 +1,45 @@
+services:
+  speedtest:
+    build: .
+    image: speedtest:latest
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+      # UDP-порт для теста потерь пакетов (WebRTC). Внутри и снаружи номер должен совпадать:
+      # сервер сообщает его браузеру.
+      - "${RTC_UDP_PORT:-3479}:${RTC_UDP_PORT:-3479}/udp"
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-Speedtest}
+      SERVER_LOCATION: ${SERVER_LOCATION:-}
+      RTC_UDP_PORT: ${RTC_UDP_PORT:-3479}
+      # Внешний IP сервера для WebRTC. Пусто — берётся из адреса, по которому пришёл браузер.
+      RTC_PUBLIC_IP: ${RTC_PUBLIC_IP:-}
+      # true — брать IP клиента из X-Forwarded-For / X-Real-IP (только за своим прокси!)
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+      # true — база с городами (~130 МБ), false — только страны (~10 МБ)
+      GEOIP_CITY: ${GEOIP_CITY:-true}
+    volumes:
+      - geoip:/data
+    ulimits:
+      nofile: 65536
+
+  # HTTPS + HTTP/2/3 через Caddy с автоматическим сертификатом Let's Encrypt.
+  # Запуск: DOMAIN=speed.example.com TRUST_PROXY=true docker compose --profile tls up -d
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on: [speedtest]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+
+volumes:
+  geoip:
+  caddy:

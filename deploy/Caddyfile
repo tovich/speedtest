@@ -1,0 +1,14 @@
+{$DOMAIN} {
+	encode {
+		gzip
+		match {
+			not path /api/*
+		}
+	}
+	reverse_proxy speedtest:8080 {
+		# без буферизации, иначе тест загрузки/отдачи измеряет прокси, а не канал
+		flush_interval -1
+		request_buffers 0
+		response_buffers 0
+	}
+}
