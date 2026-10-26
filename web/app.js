@@ -797,7 +797,10 @@ async function runTest() {
     // итоги
     res.duration = (now() - t0) / 1000;
     setMetric('data', fmtBytes(down.bytes + up.bytes), `↓ ${fmtBytes(down.bytes)} · ↑ ${fmtBytes(up.bytes)}`);
-    setMetric('proto', httpProto() || '—', `${location.protocol === 'https:' ? 'TLS · ' : ''}IPv${info?.version ?? '?'}`);
+    const proto = httpProto();
+    setMetric('proto', proto || '—', /HTTP\/[23]/.test(proto)
+      ? 'одно соединение на все потоки — скорость может быть занижена'
+      : `${location.protocol === 'https:' ? 'TLS · ' : ''}IPv${info?.version ?? '?'}`);
     setMetric('duration', res.duration.toFixed(1), 'пинг, UDP, загрузка, отдача');
 
     const loadedMax = Math.max(...[res.loadedDown, res.loadedUp].filter(ok));

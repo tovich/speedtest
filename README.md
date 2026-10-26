@@ -78,16 +78,20 @@ curl -fsSL https://raw.githubusercontent.com/tovich/speedtest/main/install.sh | 
 2. В NPM создайте Proxy Host:
    - **Details:** scheme `http`, Forward Hostname `speedtest`, Forward Port `8080`;
      **Websockets Support** — включить; **Cache Assets** — выключить.
-   - **SSL:** сертификат Let's Encrypt, Force SSL, HTTP/2.
+   - **SSL:** сертификат Let's Encrypt, Force SSL; **HTTP/2 Support — выключить**.
    - **Advanced:**
      ```nginx
      proxy_buffering          off;
      proxy_request_buffering  off;
      client_max_body_size     0;
+     client_body_buffer_size  1m;
      gzip                     off;
      ```
 3. UDP-порт 3479 идёт мимо NPM напрямую в контейнер. Если сервер за роутером, пробросьте его.
 
+С HTTP/2 браузер пускает все потоки теста через одно TCP-соединение, и на реальных каналах
+(с задержкой и потерями) скорость получается заметно ниже настоящей — как у одного потока.
+По HTTP/1.1 браузер открывает несколько отдельных соединений, как и другие тесты скорости.
 Без `client_max_body_size 0` nginx отклоняет отдачу ошибкой 413. Без WebSocket не будет пинга
 и задержки под нагрузкой. С буферизацией тест измеряет скорость до nginx, а не до посетителя.
 
@@ -120,6 +124,7 @@ curl -fsSL https://raw.githubusercontent.com/tovich/speedtest/main/install.sh | 
 | «Потери: н/д» | UDP-порт `RTC_UDP_PORT` закрыт файрволом или не проброшен |
 | «Пинг: н/д, WebSocket недоступен» | в прокси не включена поддержка WebSocket |
 | «Тест прерван: HTTP 413» | на прокси не задан `client_max_body_size 0` |
+| Скорость ниже ожидаемой, в «Подробно → Протокол» указано HTTP/2 или HTTP/3 | на прокси включён HTTP/2: все потоки идут через одно соединение; выключите HTTP/2 для этого сайта |
 | Страна и провайдер — «база загружается…» | первые минуты после установки: качаются базы GeoIP |
 
 ## Запуск из исходников

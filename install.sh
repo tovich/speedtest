@@ -202,7 +202,6 @@ EOF
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"
     environment:
       DOMAIN: ${DOMAIN}
     volumes:
@@ -219,6 +218,14 @@ EOF
 
 if [[ -n "$DOMAIN" ]]; then
   cat > Caddyfile <<'EOF'
+# Только HTTP/1.1: по HTTP/2 и HTTP/3 браузер пускает все потоки теста через одно
+# соединение, и скорость упирается в возможности одного TCP-потока.
+{
+	servers {
+		protocols h1
+	}
+}
+
 {$DOMAIN} {
 	encode {
 		gzip
@@ -247,7 +254,7 @@ open_port() {
   fi
 }
 open_port "$RTC_UDP_PORT/udp"
-if [[ -n "$DOMAIN" ]]; then open_port 80/tcp; open_port 443/tcp; open_port 443/udp
+if [[ -n "$DOMAIN" ]]; then open_port 80/tcp; open_port 443/tcp
 elif [[ -z "$PROXY_NETWORK" ]]; then open_port "$HTTP_PORT/tcp"
 fi
 
@@ -272,8 +279,8 @@ echo "${c_b}Speedtest запущен.${c_0}"
 if [[ -n "$DOMAIN" ]]; then
   echo "  Адрес: https://$DOMAIN  (сертификат выпускается при первом заходе, домен должен указывать на этот сервер)"
 elif [[ -n "$PROXY_NETWORK" ]]; then
-  echo "  В прокси создайте хост: http://speedtest:8080, включите Websockets Support,"
-  echo "  в Advanced добавьте: client_max_body_size 0; proxy_buffering off; proxy_request_buffering off;"
+  echo "  В прокси создайте хост: http://speedtest:8080, включите Websockets Support, выключите HTTP/2,"
+  echo "  в Advanced добавьте: client_max_body_size 0; client_body_buffer_size 1m; proxy_buffering off; proxy_request_buffering off;"
 else
   echo "  Адрес: http://${ip:-<IP сервера>}:$HTTP_PORT"
 fi
