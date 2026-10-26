@@ -868,5 +868,4 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#hdrIp').addEventListener('click', () => info?.ip && copy(info.ip));
   $('#copyRes').addEventListener('click', () => lastResult && copy(resultText(lastResult)));
   $('#clearHist').addEventListener('click', () => { saveHist([]); renderHist(); });
-  $('#envInfo').textContent = `${CFG.downStreams} потоков загрузки · ${CFG.upStreams} потока отдачи · ${CFG.phaseMs / 1000} с на фазу`;
 });
