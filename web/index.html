@@ -97,10 +97,30 @@
   <section class="card" aria-label="Пригодность соединения">
     <h2>Чего ждать от соединения</h2>
     <div class="quality" id="quality">
-      <div class="q" data-q="stream"><div class="q-ico">▶</div><div><div class="q-name">Видео 4K и стриминг</div><div class="q-grade">—</div></div></div>
-      <div class="q" data-q="game"><div class="q-ico">◆</div><div><div class="q-name">Онлайн-игры</div><div class="q-grade">—</div></div></div>
-      <div class="q" data-q="call"><div class="q-ico">●</div><div><div class="q-name">Видеозвонки</div><div class="q-grade">—</div></div></div>
-      <div class="q" data-q="bloat"><div class="q-ico" id="bloatGrade">—</div><div><div class="q-name">Bufferbloat</div><div class="q-grade" id="bloatText">рост задержки под нагрузкой</div></div></div>
+      <div class="q" data-q="stream">
+        <div class="q-head"><svg class="q-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="19" height="13" rx="2.5"/><path d="M8 21h8"/><path d="M10 8.2v5.6l4.8-2.8z" fill="currentColor"/></svg><span class="q-name">Видео и стриминг</span></div>
+        <div class="q-word">—</div>
+        <div class="q-meter" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div class="q-detail">Ожидание теста</div>
+      </div>
+      <div class="q" data-q="game">
+        <div class="q-head"><svg class="q-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7.5h10a4.5 4.5 0 0 1 4.4 5.4l-.6 2.9a2.6 2.6 0 0 1-4.6 1L15 15h-6l-1.2 1.8a2.6 2.6 0 0 1-4.6-1l-.6-2.9A4.5 4.5 0 0 1 7 7.5z"/><path d="M8 10v3.4M6.3 11.7h3.4"/><circle cx="15.6" cy="10.8" r="1" fill="currentColor" stroke="none"/><circle cx="17.6" cy="12.8" r="1" fill="currentColor" stroke="none"/></svg><span class="q-name">Онлайн-игры</span></div>
+        <div class="q-word">—</div>
+        <div class="q-meter" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div class="q-detail">Ожидание теста</div>
+      </div>
+      <div class="q" data-q="call">
+        <div class="q-head"><svg class="q-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="13" height="12" rx="2.5"/><path d="M15.5 10.5l6-3.3v9.6l-6-3.3z"/></svg><span class="q-name">Видеозвонки</span></div>
+        <div class="q-word">—</div>
+        <div class="q-meter" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div class="q-detail">Ожидание теста</div>
+      </div>
+      <div class="q" data-q="bloat">
+        <div class="q-head"><svg class="q-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12h4l2.2-6 4.6 12 2.4-6h5.8"/></svg><span class="q-name">Bufferbloat</span></div>
+        <div class="q-word">—</div>
+        <div class="q-meter" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <div class="q-detail">Рост задержки под нагрузкой</div>
+      </div>
     </div>
   </section>
 

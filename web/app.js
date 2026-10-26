@@ -461,22 +461,32 @@ function bloatGrade(delta) {
   return ['F', 1];
 }
 
+const LEVEL_WORD = { 4: 'Отлично', 3: 'Хорошо', 2: 'Средне', 1: 'Плохо' };
+
+// уровень 1…4 и пояснение для каждого сценария
 function qualities(r) {
   const loss = ok(r.loss) ? r.loss : 0;
   const loaded = Math.max(r.loadedDown || 0, r.loadedUp || 0);
   const stream =
-    r.down >= 25 && loaded < 150 && loss < 1 ? [4, 'Отлично — 4K без буферизации'] :
-    r.down >= 10 ? [3, 'Хорошо — Full HD'] :
-    r.down >= 4 ? [2, 'Удовлетворительно — SD/HD'] : [1, 'Плохо — возможны паузы'];
+    r.down >= 25 && loaded < 150 && loss < 1 ? [4, '4K без буферизации'] :
+    r.down >= 10 ? [3, 'Full HD без пауз'] :
+    r.down >= 4 ? [2, 'SD/HD, возможна буферизация'] : [1, 'Видео будет прерываться'];
   const game =
-    r.ping < 30 && r.jitter < 5 && loss < 0.5 && r.bloat < 30 ? [4, 'Отлично — минимальная задержка'] :
-    r.ping < 60 && r.jitter < 15 && loss < 1.5 ? [3, 'Хорошо'] :
-    r.ping < 100 && loss < 3 ? [2, 'Терпимо — заметные лаги'] : [1, 'Плохо — высокая задержка'];
+    r.ping < 30 && r.jitter < 5 && loss < 0.5 && r.bloat < 30 ? [4, 'Минимальная задержка'] :
+    r.ping < 60 && r.jitter < 15 && loss < 1.5 ? [3, 'Комфортно для большинства игр'] :
+    r.ping < 100 && loss < 3 ? [2, 'Заметные лаги в динамичных играх'] : [1, 'Высокая задержка'];
   const call =
-    r.up >= 3 && r.down >= 3 && r.ping < 80 && r.jitter < 20 && loss < 1 ? [4, 'Отлично — HD-видео'] :
-    r.up >= 1.5 && r.ping < 150 && r.jitter < 40 && loss < 3 ? [3, 'Хорошо'] :
-    r.up >= 0.5 ? [2, 'Только голос / низкое качество'] : [1, 'Плохо'];
+    r.up >= 3 && r.down >= 3 && r.ping < 80 && r.jitter < 20 && loss < 1 ? [4, 'HD-видео без задержек'] :
+    r.up >= 1.5 && r.ping < 150 && r.jitter < 40 && loss < 3 ? [3, 'Видео в обычном качестве'] :
+    r.up >= 0.5 ? [2, 'Надёжно только голос'] : [1, 'Связь будет прерываться'];
   return { stream, game, call };
+}
+
+function setQuality(k, level, word, detail) {
+  const el = $(`.q[data-q="${k}"]`);
+  if (level) el.dataset.level = level; else el.removeAttribute('data-level');
+  $('.q-word', el).textContent = word;
+  $('.q-detail', el).textContent = detail;
 }
 
 // ---------- отображение ----------
@@ -604,9 +614,8 @@ async function runTest() {
   headline.reset();
   chart.reset();
   renderMetricsSkeleton();
-  for (const q of document.querySelectorAll('.q')) { q.removeAttribute('data-level'); $('.q-grade', q).textContent = '—'; }
-  $('#bloatGrade').textContent = '—';
-  $('#bloatText').textContent = 'рост задержки под нагрузкой';
+  for (const k of ['stream', 'game', 'call']) setQuality(k, 0, '—', 'Ожидание теста');
+  setQuality('bloat', 0, '—', 'Рост задержки под нагрузкой');
   progressBase = 0;
   performance.clearResourceTimings();
 
@@ -688,15 +697,9 @@ async function runTest() {
     res.bloat = Math.max(res.loadedDown || 0, res.loadedUp || 0) - res.ping;
     const [grade, lvl] = bloatGrade(res.bloat);
     res.grade = grade;
-    $('#bloatGrade').textContent = grade;
-    $('#bloatGrade').closest('.q').dataset.level = lvl;
-    $('#bloatText').textContent = ok(res.bloat) ? `+${fmtMs(Math.max(0, res.bloat))} мс под нагрузкой` : '—';
-    const q = qualities(res);
-    for (const [k, [lvl2, text]] of Object.entries(q)) {
-      const el = $(`.q[data-q="${k}"]`);
-      el.dataset.level = lvl2;
-      $('.q-grade', el).textContent = text;
-    }
+    setQuality('bloat', lvl, lvl ? `${LEVEL_WORD[lvl]} · ${grade}` : '—',
+      !ok(res.bloat) ? 'Нет данных' : res.bloat < 1 ? 'Задержка под нагрузкой не растёт' : `+${fmtMs(res.bloat)} мс к задержке под нагрузкой`);
+    for (const [k, [level, detail]] of Object.entries(qualities(res))) setQuality(k, level, LEVEL_WORD[level], detail);
 
     lastResult = res;
     const h = loadHist();
