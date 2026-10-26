@@ -373,7 +373,7 @@ function speedTracker(onTick) {
     while (j > 0 && t - samples[j - 1][0] <= 1000) j--;
     const [tw, bw] = samples[j];
     const mbps = t > tw ? (bytes - bw) * 8 / (t - tw) / 1000 : 0;
-    if (t >= 1000) peak = Math.max(peak, mbps);
+    if (t >= CFG.graceMs + 1000) peak = Math.max(peak, mbps); // окно целиком после разгона
     onTick(mbps, t);
   }, 100);
   return {
