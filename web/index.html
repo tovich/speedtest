@@ -46,12 +46,12 @@
 
   <!-- Тест -->
   <section class="card test" aria-label="Тест скорости">
-    <div class="gauge-wrap">
+    <div class="gauge-col">
+    <div class="gauge-wrap" id="gaugeWrap">
       <svg class="gauge" id="gauge" viewBox="0 0 300 300" aria-hidden="true">
         <defs>
           <linearGradient id="gDown" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#3b82f6"/></linearGradient>
           <linearGradient id="gUp" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#c084fc"/><stop offset="1" stop-color="#f472b6"/></linearGradient>
-          <linearGradient id="gPing" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#fb923c"/></linearGradient>
           <filter id="glow" x="-40%" y="-40%" width="180%" height="180%" filterUnits="objectBoundingBox"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
         </defs>
         <path class="g-track" id="gTrack"/>
@@ -67,7 +67,20 @@
           <div class="unit" id="bigUnit">Мбит/с</div>
         </div>
       </div>
-      <div class="progress" aria-hidden="true"><div id="progressBar"></div></div>
+      <!-- пинг и потери показываются отдельно от спидометра -->
+      <div class="lat-view" id="latView" aria-live="polite">
+        <div class="phase" id="latTitle">Пинг</div>
+        <div class="lat-big"><b class="mono" id="latVal">—</b><span id="latUnit">мс</span></div>
+        <div class="lat-sub" id="latSub"></div>
+        <div class="lat-viz" id="latViz"></div>
+      </div>
+    </div>
+    <ol class="steps" id="steps" aria-label="Этапы теста">
+      <li data-step="ping"><span class="st-name">Пинг</span><span class="st-bar"><i></i></span></li>
+      <li data-step="udp"><span class="st-name">Потери</span><span class="st-bar"><i></i></span></li>
+      <li data-step="down"><span class="st-name">Загрузка</span><span class="st-bar"><i></i></span></li>
+      <li data-step="up"><span class="st-name">Отдача</span><span class="st-bar"><i></i></span></li>
+    </ol>
     </div>
 
     <div class="live">

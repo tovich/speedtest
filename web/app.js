@@ -115,7 +115,6 @@ class Tween {
 const SCALES = {
   speed: [0, 5, 10, 25, 50, 100, 250, 500, 750, 1000],
   speedHi: [0, 10, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
-  ping: [0, 5, 10, 20, 30, 50, 75, 100, 150, 250],
 };
 const gauge = {
   cx: 150, cy: 150, r: 120, a0: 135, sweep: 270,
@@ -129,7 +128,7 @@ const gauge = {
     this.setScale(SCALES.speed);
     // стрелка анимируется по положению на шкале (шкала нелинейная), число — по значению
     this.tween = new Tween(f => this.render(f), 180);
-    this.num = new Tween(v => { $('#bigVal').textContent = this.mode === 'ping' ? fmtMs(v) : fmtSpeed(v); }, 180);
+    this.num = new Tween(v => { $('#bigVal').textContent = fmtSpeed(v); }, 180);
   },
   pt(angle, r) {
     const a = angle * Math.PI / 180;
@@ -165,14 +164,13 @@ const gauge = {
   },
   setMode(mode) {
     this.mode = mode;
-    const grad = { down: 'gDown', up: 'gUp', ping: 'gPing' }[mode];
-    this.fill.style.stroke = `url(#${grad})`;
-    this.setScale(mode === 'ping' ? SCALES.ping : SCALES.speed);
+    this.fill.style.stroke = `url(#${mode === 'up' ? 'gUp' : 'gDown'})`;
+    this.setScale(SCALES.speed);
     this.tween.set(0, true);
     this.num.set(0, true);
   },
   set(v) {
-    if (this.mode !== 'ping' && v > 900 && this.scale === SCALES.speed) this.setScale(SCALES.speedHi);
+    if (v > 900 && this.scale === SCALES.speed) this.setScale(SCALES.speedHi);
     this.tween.set(this.frac(v));
     this.num.set(v);
   },
@@ -185,6 +183,7 @@ const gauge = {
   },
   render(f) {
     this.fill.setAttribute('d', this.arc(0, f));
+    this.fill.style.opacity = f < 0.003 ? 0 : 1; // без «точки» от скруглённого конца на нуле
     this.needle.style.transform = `rotate(${this.a0 + this.sweep * f + 90}deg)`;
   },
 };
@@ -307,7 +306,9 @@ async function measureLatency(pinger, onSample) {
 }
 
 // ---------- потери пакетов (WebRTC, UDP без повторов) ----------
-async function measureUdp(onProgress, onRtt) {
+// view.sent(i) — пакет отправлен, view.echo(i) — вернулся, view.lost(i) — не вернулся за 1 с,
+// view.update(отправлено, учтено, потеряно, rtt[]) — после каждого шага
+async function measureUdp(view) {
   const pc = new RTCPeerConnection({ iceServers: [] });
   try {
     const dc = pc.createDataChannel('loss', { ordered: false, maxRetransmits: 0 });
@@ -328,17 +329,29 @@ async function measureUdp(onProgress, onRtt) {
     const N = CFG.udpPackets, sent = new Float64Array(N), rtt = new Float64Array(N).fill(NaN);
     dc.onmessage = e => {
       const i = new DataView(e.data).getUint32(0);
-      if (i < N && !ok(rtt[i])) { rtt[i] = now() - sent[i]; onRtt(rtt[i]); }
+      if (i < N && !ok(rtt[i]) && !(sent[i] < 0)) { rtt[i] = now() - sent[i]; view.echo(i); }
+    };
+    // пакет считается потерянным, если не вернулся за секунду
+    let settled = 0, lost = 0;
+    const settle = all => {
+      while (settled < N && sent[settled] > 0 && (all || now() - sent[settled] > 1000)) {
+        if (!ok(rtt[settled])) { lost++; sent[settled] = -1; view.lost(settled); }
+        settled++;
+      }
     };
     const buf = new ArrayBuffer(64);
     for (let i = 0; i < N; i++) {
       new DataView(buf).setUint32(0, i);
       sent[i] = now();
       dc.send(buf);
-      onProgress((i + 1) / N);
+      view.sent(i);
+      settle(false);
+      view.update(i + 1, settled, lost, rtt);
       await sleep(CFG.udpInterval);
     }
-    await sleep(1500); // ждём опоздавших
+    for (let k = 0; k < 10; k++) { await sleep(100); settle(false); view.update(N, settled, lost, rtt); }
+    settle(true);
+    view.update(N, settled, lost, rtt);
     const got = [...rtt].filter(ok); // в порядке отправки
     return { sent: N, received: got.length, loss: (N - got.length) / N * 100, rtt: median(got), jitter: jitterOf(got) };
   } finally {
@@ -541,18 +554,87 @@ const headline = {
   },
 };
 
-async function setPhase(name, mode) {
-  $('#phase').textContent = name;
-  if (gauge.mode !== mode) await gauge.drop();
-  $('#bigUnit').textContent = mode === 'ping' ? 'мс' : 'Мбит/с';
-  gauge.setMode(mode);
-  $('#hmDown').classList.toggle('active', mode === 'down');
-  $('#hmUp').classList.toggle('active', mode === 'up');
+// phase: ping | udp | down | up
+async function setPhase(phase) {
+  if (phase === 'ping' || phase === 'udp') {
+    latView.show(phase);
+  } else {
+    if (gauge.mode !== phase) await gauge.drop();
+    latView.hide();
+    $('#phase').textContent = phase === 'down' ? 'Загрузка' : 'Отдача';
+    gauge.setMode(phase);
+  }
+  $('#hmDown').classList.toggle('active', phase === 'down');
+  $('#hmUp').classList.toggle('active', phase === 'up');
 }
 
-let progressBase = 0;
-const PHASE_W = { ping: .08, udp: .12, down: .4, up: .4 };
-function setProgress(phase, f) { $('#progressBar').style.width = ((progressBase + PHASE_W[phase] * Math.min(1, f)) * 100) + '%'; }
+const steps = {
+  el: k => $(`#steps [data-step="${k}"]`),
+  reset() {
+    for (const li of document.querySelectorAll('#steps li')) { li.className = ''; $('i', li).style.width = '0'; }
+  },
+  set(k, f) {
+    const li = this.el(k);
+    li.classList.add('active');
+    $('i', li).style.width = Math.min(100, f * 100) + '%';
+  },
+  done(k) { const li = this.el(k); li.classList.remove('active'); li.classList.add('done'); },
+};
+
+// пинг: столбик на каждый замер; потери: ячейка на каждый пакет
+const latView = {
+  init() {
+    this.num = new Tween(v => { $('#latVal').textContent = this.kind === 'udp' ? fmtPct(v) : fmtMs(v); }, 200);
+  },
+  show(kind) {
+    this.kind = kind;
+    const viz = $('#latViz');
+    this.num.set(0, true);
+    $('#latVal').textContent = '—';
+    if (kind === 'ping') {
+      $('#latTitle').textContent = 'Пинг';
+      $('#latUnit').textContent = 'мс';
+      $('#latSub').textContent = 'медиана задержки';
+      viz.className = 'lat-viz bars';
+      viz.innerHTML = '<i></i>'.repeat(CFG.pingCount) + '<div class="med"></div>';
+      this.rtts = [];
+    } else {
+      $('#latTitle').textContent = 'Потери пакетов';
+      $('#latUnit').textContent = '%';
+      $('#latSub').textContent = 'отправляем пакеты по UDP';
+      viz.className = 'lat-viz cells';
+      viz.innerHTML = '<i></i>'.repeat(CFG.udpPackets);
+    }
+    this.cells = viz.querySelectorAll('i');
+    $('#gaugeWrap').classList.add('lat');
+  },
+  hide() { $('#gaugeWrap').classList.remove('lat'); },
+  fail(text) { $('#latVal').textContent = 'н/д'; $('#latSub').textContent = text; },
+  ping(rtt) {
+    this.rtts.push(rtt);
+    const max = Math.max(...this.rtts) * 1.15;
+    this.rtts.forEach((v, i) => {
+      this.cells[i].style.height = Math.max(6, v / max * 100) + '%';
+      this.cells[i].classList.add('on');
+    });
+    const med = median(this.rtts);
+    const line = $('#latViz .med');
+    line.style.bottom = (med / max * 100) + '%';
+    line.classList.add('on');
+    this.num.set(med);
+    $('#latSub').textContent = `медиана · ${this.rtts.length} из ${CFG.pingCount} замеров`;
+  },
+  // колбэки для measureUdp
+  sent(i) { this.cells[i].classList.add('sent'); },
+  echo(i) { this.cells[i].classList.add('ok'); },
+  lost(i) { this.cells[i].classList.add('lost'); },
+  update(sentN, settled, lost) {
+    if (settled) this.num.set(lost / settled * 100);
+    steps.set('udp', sentN / CFG.udpPackets);
+    const got = this.cells.length ? [...this.cells].filter(c => c.classList.contains('ok')).length : 0;
+    $('#latSub').textContent = `отправлено ${sentN} · вернулось ${got}`;
+  },
+};
 
 // ---------- информация о подключении ----------
 let info = null;
@@ -627,53 +709,62 @@ async function runTest() {
   renderMetricsSkeleton();
   for (const k of ['stream', 'game', 'call']) setQuality(k, 0, '—', 'Ожидание теста');
   setQuality('bloat', 0, '—', 'Рост задержки под нагрузкой');
-  progressBase = 0;
+  steps.reset();
 
   const pinger = new Pinger();
   try {
     // 1. задержка в покое
-    await setPhase('Пинг', 'ping');
+    await setPhase('ping');
+    steps.set('ping', 0);
     let wsOk = true;
     try { await pinger.open(); } catch { wsOk = false; }
     if (wsOk) {
-      const lat = await measureLatency(pinger, (rtt, f) => { gauge.set(rtt); $('#vPing').textContent = fmtMs(rtt); setProgress('ping', f); });
+      const lat = await measureLatency(pinger, (rtt, f) => { latView.ping(rtt); $('#vPing').textContent = fmtMs(rtt); steps.set('ping', f); });
       Object.assign(res, { ping: lat.median, jitter: lat.jitter });
       $('#vPing').textContent = fmtMs(lat.median);
       $('#vJitter').textContent = fmtMs(lat.jitter);
       setMetric('ping', fmtMs(lat.median), `мин ${fmtMs(lat.min)} · ср ${fmtMs(lat.avg)} · макс ${fmtMs(lat.max)}`);
       setMetric('jitter', fmtMs(lat.jitter), `σ ${fmtMs(lat.stdev)} мс · ${CFG.pingCount} замеров`);
     } else {
+      latView.fail('WebSocket недоступен — проверьте прокси');
+      await sleep(1200);
       $('#vPing').textContent = $('#vJitter').textContent = 'н/д';
       setMetric('ping', 'н/д', 'WebSocket недоступен — проверьте прокси');
       setMetric('jitter', 'н/д', '');
     }
-    progressBase += PHASE_W.ping;
+    await sleep(500); // дать рассмотреть итог
+    steps.done('ping');
 
     // 2. потери пакетов
-    await setPhase('Потери пакетов', 'ping');
+    await setPhase('udp');
+    steps.set('udp', 0);
     try {
       if (!info?.udp || !window.RTCPeerConnection) throw new Error('UDP-тест недоступен');
-      const udp = await measureUdp(f => setProgress('udp', f), rtt => gauge.set(rtt));
+      const udp = await measureUdp(latView);
+      latView.num.set(udp.loss);
+      $('#latSub').textContent = `вернулось ${udp.received} из ${udp.sent} · задержка UDP ${fmtMs(udp.rtt)} мс`;
       Object.assign(res, { loss: udp.loss, udpRtt: udp.rtt, udpJitter: udp.jitter });
       $('#vLoss').textContent = fmtPct(udp.loss);
       setMetric('loss', fmtPct(udp.loss), `получено ${udp.received} из ${udp.sent} пакетов`);
       setMetric('udpRtt', fmtMs(udp.rtt), `джиттер UDP ${fmtMs(udp.jitter)} мс`);
     } catch (e) {
+      latView.fail('UDP заблокирован или недоступен');
       $('#vLoss').textContent = 'н/д';
       setMetric('loss', 'н/д', 'UDP заблокирован или недоступен');
       setMetric('udpRtt', 'н/д', '');
     }
-    progressBase += PHASE_W.udp;
+    await sleep(900);
+    steps.done('udp');
 
     // 3. загрузка
-    await setPhase('Загрузка', 'down');
+    await setPhase('down');
     headline.downSet = true;
     const tDown = now();
     const stopDL = pinger.startLoaded(rtt => chart.push('ping', (now() - tDown) / 1000, rtt));
     const down = await measureDownload((mbps, t) => {
       gauge.set(mbps); headline.down.set(mbps);
       chart.push('down', t / 1000, mbps);
-      setProgress('down', t / CFG.phaseMs);
+      steps.set('down', t / CFG.phaseMs);
     });
     const loadedDown = stopDL();
     res.down = down.mbps;
@@ -682,17 +773,17 @@ async function runTest() {
     setMetric('down', fmtSpeed(down.mbps), `пик ${fmtSpeed(down.peak)} Мбит/с · ${CFG.downStreams} потоков`);
     setMetric('loadedDown', fmtMs(res.loadedDown), ok(res.loadedDown) ? `+${fmtMs(Math.max(0, res.loadedDown - res.ping))} мс к покою · джиттер ${fmtMs(jitterOf(loadedDown))}` : '');
     setMetric('ttfb', fmtMs(down.ttfb), 'медиана по запросам загрузки');
-    progressBase += PHASE_W.down;
+    steps.done('down');
 
     // 4. отдача
-    await setPhase('Отдача', 'up');
+    await setPhase('up');
     headline.upSet = true;
     const tUp = now();
     const stopUL = pinger.startLoaded(rtt => chart.push('ping', (now() - tUp) / 1000, rtt));
     const up = await measureUpload((mbps, t) => {
       gauge.set(mbps); headline.up.set(mbps);
       chart.push('up', t / 1000, mbps);
-      setProgress('up', t / CFG.phaseMs);
+      steps.set('up', t / CFG.phaseMs);
     });
     const loadedUp = stopUL();
     res.up = up.mbps;
@@ -700,7 +791,7 @@ async function runTest() {
     headline.up.set(up.mbps);
     setMetric('up', fmtSpeed(up.mbps), `пик ${fmtSpeed(up.peak)} Мбит/с · ${CFG.upStreams} потока`);
     setMetric('loadedUp', fmtMs(res.loadedUp), ok(res.loadedUp) ? `+${fmtMs(Math.max(0, res.loadedUp - res.ping))} мс к покою · джиттер ${fmtMs(jitterOf(loadedUp))}` : '');
-    setProgress('up', 1);
+    steps.done('up');
 
     // итоги
     res.duration = (now() - t0) / 1000;
@@ -757,6 +848,7 @@ function resultText(r) {
 // ---------- запуск ----------
 document.addEventListener('DOMContentLoaded', () => {
   gauge.init();
+  latView.init();
   chart.init();
   headline.init();
   renderMetricsSkeleton();
