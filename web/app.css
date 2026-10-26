@@ -48,7 +48,7 @@ body {
   background: var(--bg);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 .mono { font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
 .bg {
@@ -75,7 +75,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding-
 .card {
   background: var(--card); border: 1px solid var(--card-b); border-radius: var(--r);
   padding: 22px; box-shadow: var(--shadow);
-  backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
+  /* без backdrop-filter: размытие под карточками вдвое снижало FPS прокрутки на телефонах */
   animation: rise .5s cubic-bezier(.2, .8, .2, 1) both;
 }
 .card:nth-child(2) { animation-delay: .05s; }

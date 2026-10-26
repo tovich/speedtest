@@ -64,6 +64,7 @@ async function copy(text) {
   const sys = matchMedia('(prefers-color-scheme: light)');
   const apply = t => {
     root.dataset.theme = t;
+    dispatchEvent(new Event('themechange'));
     $('meta[name="theme-color"]').content = t === 'light' ? '#f3f5fa' : '#0b0f1a';
   };
   apply(saved || (sys.matches ? 'light' : 'dark'));
@@ -72,7 +73,6 @@ async function copy(text) {
     saved = root.dataset.theme === 'light' ? 'dark' : 'light';
     try { localStorage.setItem('st.theme', saved); } catch {}
     apply(saved);
-    chart.dirty = true;
   }));
 })();
 
@@ -196,6 +196,7 @@ const chart = {
     this.cv = $('#chart');
     this.ctx = this.cv.getContext('2d');
     new ResizeObserver(() => { this.resize(); this.draw(); }).observe(this.cv);
+    addEventListener('themechange', () => { this.colors = null; this.dirty = true; anim.kick(); });
   },
   resize() {
     const dpr = Math.min(2, devicePixelRatio || 1);
@@ -211,8 +212,11 @@ const chart = {
     this.dirty = false;
     const { ctx, w, h } = this;
     if (!w) return;
-    const css = getComputedStyle(document.documentElement);
-    const col = n => css.getPropertyValue(n).trim();
+    if (!this.colors) {
+      const css = getComputedStyle(document.documentElement);
+      this.colors = Object.fromEntries(['--faint', '--muted', '--down', '--up', '--ping'].map(n => [n, css.getPropertyValue(n).trim()]));
+    }
+    const col = n => this.colors[n];
     ctx.clearRect(0, 0, w, h);
     const pad = 8, top = 28, T = CFG.phaseMs / 1000;
     const speeds = [...this.series.down, ...this.series.up].map(p => p[1]);
