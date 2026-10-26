@@ -109,7 +109,7 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 650; letter-spacing: -.01em
 /* --- тест --- */
 .test { display: grid; grid-template-columns: 360px 1fr; gap: 28px; align-items: center; }
 .gauge-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.gauge-wrap { position: relative; width: 100%; max-width: 360px; margin: 0 auto; aspect-ratio: 1; }
+.gauge-wrap { position: relative; width: 100%; max-width: 360px; margin: 0 auto; aspect-ratio: 300 / 240; }
 .gauge { width: 100%; height: 100%; overflow: visible; }
 .gauge, .gauge-center { transition: opacity .4s, transform .45s cubic-bezier(.2, .8, .2, 1); }
 .gauge-wrap.lat .gauge, .gauge-wrap.lat .gauge-center { opacity: 0; transform: scale(.92); pointer-events: none; }
@@ -117,9 +117,14 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 650; letter-spacing: -.01em
 .g-fill { fill: none; stroke: url(#gDown); stroke-width: 16; stroke-linecap: round; transition: stroke .3s; }
 .g-ticks text { fill: var(--muted); font-size: 11px; text-anchor: middle; dominant-baseline: middle; font-family: ui-monospace, Menlo, monospace; }
 .g-ticks line { stroke: var(--muted); stroke-width: 1.5; opacity: .5; }
+/* во время теста крайние подписи уступают место числу под стрелкой */
+.g-ticks text { transition: opacity .3s; }
+.testing .g-ticks text:first-of-type, .testing .g-ticks text:last-of-type { opacity: 0; }
 .g-needle { fill: var(--text); transform-origin: 150px 150px; opacity: 0; transition: opacity .4s; }
 .testing .g-needle { opacity: .9; }
-.gauge-center { position: absolute; inset: 0; display: grid; place-items: center; }
+/* шкала обрезана снизу (viewBox 0 14 300 240), а центральный блок остаётся квадратом с центром в оси стрелки */
+.gauge-center { position: absolute; left: 0; right: 0; top: -5.833%; height: 125%; display: grid; place-items: center; }
+.gauge-center > * { grid-area: 1 / 1; }
 .start {
   position: relative; width: 150px; height: 150px; border-radius: 50%; border: 0; cursor: pointer;
   color: #fff; font: inherit; font-size: 22px; font-weight: 700; letter-spacing: .02em;
@@ -138,15 +143,16 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 650; letter-spacing: -.01em
 .start:active { transform: scale(.97); }
 .start:disabled { cursor: default; }
 .start.out { transform: scale(.6); opacity: 0; pointer-events: none; }
-.readout { text-align: center; animation: fadeIn .35s both; margin-top: 64px; }
+/* число — сразу под осью стрелки: отступ в % считается от ширины, а блок квадратный */
+.readout { text-align: center; animation: fadeIn .35s both; align-self: start; margin-top: calc(50% + 26px); }
 @keyframes fadeIn { from { opacity: 0; transform: scale(.92); } }
 .phase { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .1em; max-width: 9em; margin: 0 auto; white-space: nowrap; font-weight: 600; }
-.big { font-size: 52px; font-weight: 700; letter-spacing: -.03em; line-height: 1.05; margin-top: 2px; }
+.big { font-size: 48px; font-weight: 700; letter-spacing: -.03em; line-height: 1.05; margin-top: 2px; }
 .unit { color: var(--muted); font-size: 14px; }
 
 /* пинг и потери */
 .lat-view {
-  position: absolute; inset: 4%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
   text-align: center; opacity: 0; transform: scale(.96); pointer-events: none;
   transition: opacity .4s, transform .45s cubic-bezier(.2, .8, .2, 1);
 }
@@ -283,16 +289,54 @@ footer a { color: inherit; }
   .metrics, .quality { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 480px) {
+  .top { height: 56px; }
   .top, main, footer { padding: 0 16px; }
-  .card { padding: 16px; border-radius: 16px; }
+  main { gap: 12px; }
+  .card { padding: 14px; border-radius: 16px; }
+  h2 { font-size: 15px; margin-bottom: 12px; }
+  .h2row { margin-bottom: 12px; }
+
+  .conn { gap: 12px; }
+  .conn-grid { gap: 10px 12px; }
   .ip { font-size: 21px; }
+
+  .test { gap: 14px; }
+  .gauge-wrap { max-width: 290px; }
+  .start { width: 112px; height: 112px; font-size: 18px; }
+  .readout { margin-top: calc(50% + 20px); }
+  .big { font-size: 38px; }
+  .lat-big b { font-size: 42px; }
+  .lat-sub { font-size: 12px; }
+  .lat-viz { margin-top: 10px; max-width: 220px; }
+  .lat-viz.bars { height: 60px; }
+  .lat-viz.cells { gap: 2px; }
+  .steps { gap: 6px; }
+  .steps li { font-size: 11.5px; gap: 4px; }
+
+  .live { gap: 12px; }
+  .headline { gap: 10px; }
+  .hm { padding: 10px 12px; border-radius: 14px; }
+  .hm-label { font-size: 12px; }
   .hm-val b { font-size: 26px; }
-  .hm { padding: 12px; }
-  .big { font-size: 40px; }
-  .start { width: 124px; height: 124px; font-size: 19px; }
-  .metrics, .quality { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .quality { grid-template-columns: minmax(0, 1fr); }
-  .m .mv { font-size: 19px; }
+  .subline { gap: 10px; }
+  .sm b { font-size: 18px; }
+  .chart-box { height: 120px; }
+  .chart-legend { margin-top: -6px; }
+  .btn { padding: 8px 14px; font-size: 14px; }
+
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .m { padding: 10px 12px; border-radius: 12px; }
+  .m .label { font-size: 12px; }
+  .m .mv { font-size: 18px; margin-top: 2px; }
+  .m .mh { font-size: 11.5px; line-height: 1.3; }
+
+  .quality { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .q { padding: 12px; gap: 6px; border-radius: 12px; }
+  .q-head { gap: 8px; align-items: flex-start; }
+  .q-ico { width: 28px; height: 28px; padding: 5px; border-radius: 8px; }
+  .q-name { font-size: 12.5px; line-height: 1.25; }
+  .q-word { font-size: 15px; margin-top: 0; }
+  .q-detail { font-size: 11.5px; line-height: 1.3; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
