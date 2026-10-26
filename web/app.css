@@ -112,7 +112,9 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 650; letter-spacing: -.01em
 .gauge-wrap { position: relative; width: 100%; max-width: 360px; margin: 0 auto; aspect-ratio: 300 / 240; }
 .gauge { width: 100%; height: 100%; overflow: visible; }
 .gauge, .gauge-center { transition: opacity .4s, transform .45s cubic-bezier(.2, .8, .2, 1); }
-.gauge-wrap.lat .gauge, .gauge-wrap.lat .gauge-center { opacity: 0; transform: scale(.92); pointer-events: none; }
+.gauge-wrap.lat .gauge, .gauge-wrap.lat .gauge-center { opacity: 0; pointer-events: none; }
+.gauge-wrap.lat .gauge { transform: scale(.92); }
+.gauge-wrap.lat .gauge-center { transform: translateY(-4.667%) scale(.92); }
 .g-track { fill: none; stroke: var(--faint); stroke-width: 16; stroke-linecap: round; }
 .g-fill { fill: none; stroke: url(#gDown); stroke-width: 16; stroke-linecap: round; transition: stroke .3s; }
 .g-ticks text { fill: var(--muted); font-size: 11px; text-anchor: middle; dominant-baseline: middle; font-family: ui-monospace, Menlo, monospace; }
@@ -122,8 +124,10 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 650; letter-spacing: -.01em
 .testing .g-ticks text:first-of-type, .testing .g-ticks text:last-of-type { opacity: 0; }
 .g-needle { fill: var(--text); transform-origin: 150px 150px; opacity: 0; transition: opacity .4s; }
 .testing .g-needle { opacity: .9; }
-/* шкала обрезана снизу (viewBox 0 14 300 240), а центральный блок остаётся квадратом с центром в оси стрелки */
-.gauge-center { position: absolute; left: 0; right: 0; top: -5.833%; height: 125%; display: grid; place-items: center; }
+/* шкала обрезана (viewBox 0 14 300 240) и прижата к верху блока; центральный блок — квадрат со стороной
+   в ширину блока, сдвинутый вверх на 14/300, так что его центр всегда совпадает с осью стрелки,
+   даже если сетка растянет блок по высоте */
+.gauge-center { position: absolute; left: 0; right: 0; top: 0; aspect-ratio: 1; transform: translateY(-4.667%); display: grid; place-items: center; }
 .gauge-center > * { grid-area: 1 / 1; }
 .start {
   position: relative; width: 150px; height: 150px; border-radius: 50%; border: 0; cursor: pointer;
@@ -314,7 +318,7 @@ footer a { color: inherit; }
   /* тест: спидометр слева, цифры справа, этапы и график на всю ширину */
   .test { grid-template-columns: 52% minmax(0, 1fr); grid-template-areas: "gauge head" "gauge sub" "steps steps" "chart chart" "legend legend" "again again"; gap: 10px 12px; align-items: center; }
   .gauge-col, .live { display: contents; }
-  .gauge-wrap { grid-area: gauge; max-width: none; }
+  .gauge-wrap { grid-area: gauge; max-width: none; align-self: center; }
   .steps { grid-area: steps; max-width: none; gap: 6px; margin-top: 2px; }
   .headline { grid-area: head; grid-template-columns: minmax(0, 1fr); gap: 8px; align-self: end; }
   .subline { grid-area: sub; grid-template-columns: minmax(0, 1fr); gap: 2px; align-self: start; }
@@ -323,7 +327,7 @@ footer a { color: inherit; }
   .again-row { grid-area: again; }
 
   .g-ticks text { font-size: 17px; }
-  .start { width: 78px; height: 78px; font-size: 14px; }
+  .start { width: 66px; height: 66px; font-size: 12.5px; }
   .readout { margin-top: calc(50% + 10px); }
   .phase { font-size: 9.5px; }
   .big { font-size: 21px; }
