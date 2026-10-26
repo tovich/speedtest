@@ -214,11 +214,11 @@ const chart = {
     if (!w) return;
     if (!this.colors) {
       const css = getComputedStyle(document.documentElement);
-      this.colors = Object.fromEntries(['--faint', '--muted', '--down', '--up', '--ping'].map(n => [n, css.getPropertyValue(n).trim()]));
+      this.colors = Object.fromEntries(['--faint', '--down', '--up', '--ping'].map(n => [n, css.getPropertyValue(n).trim()]));
     }
     const col = n => this.colors[n];
     ctx.clearRect(0, 0, w, h);
-    const pad = 8, top = 28, T = CFG.phaseMs / 1000;
+    const pad = 8, top = 12, T = CFG.phaseMs / 1000;
     const speeds = [...this.series.down, ...this.series.up].map(p => p[1]);
     const ymax = Math.max(1, ...speeds) * 1.15;
     const X = t => pad + (w - 2 * pad) * Math.min(1, t / T);
@@ -227,9 +227,6 @@ const chart = {
     ctx.strokeStyle = col('--faint');
     ctx.lineWidth = 1;
     for (let i = 1; i <= 3; i++) { const y = top + (h - pad - top) * i / 4; ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(w - pad, y); ctx.stroke(); }
-    ctx.fillStyle = col('--muted');
-    ctx.font = '11px ui-monospace, Menlo, monospace';
-    ctx.fillText(fmtSpeed(ymax / 1.15) + ' Мбит/с', 12, 18);
 
     const line = (pts, color, m, area) => {
       if (pts.length < 2) return;
