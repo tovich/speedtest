@@ -636,7 +636,7 @@ const latView = {
     if (settled) this.num.set(lost / settled * 100);
     steps.set('udp', sentN / CFG.udpPackets);
     const got = this.cells.length ? [...this.cells].filter(c => c.classList.contains('ok')).length : 0;
-    $('#latSub').textContent = `отправлено ${sentN} · вернулось ${got}`;
+    $('#latSub').textContent = `вернулось ${got} из ${sentN}`;
   },
 };
 
@@ -659,6 +659,9 @@ async function loadInfo() {
   }
   $('#ip').textContent = info.ip;
   $('#ip').classList.remove('skel');
+  const hdr = $('#hdrIp');
+  hdr.textContent = `${flagEmoji(info.geo?.countryCode)} ${info.ip}`.trim();
+  hdr.hidden = false;
   const ver = $('#ipVer');
   ver.textContent = 'IPv' + info.version;
   ver.hidden = false;
@@ -746,7 +749,7 @@ async function runTest() {
       if (!info?.udp || !window.RTCPeerConnection) throw new Error('UDP-тест недоступен');
       const udp = await measureUdp(latView);
       latView.num.set(udp.loss);
-      $('#latSub').textContent = `вернулось ${udp.received} из ${udp.sent} · задержка UDP ${fmtMs(udp.rtt)} мс`;
+      $('#latSub').textContent = `вернулось ${udp.received} из ${udp.sent} · UDP ${fmtMs(udp.rtt)} мс`;
       Object.assign(res, { loss: udp.loss, udpRtt: udp.rtt, udpJitter: udp.jitter });
       $('#vLoss').textContent = fmtPct(udp.loss);
       setMetric('loss', fmtPct(udp.loss), `получено ${udp.received} из ${udp.sent} пакетов`);
@@ -862,6 +865,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#startBtn').addEventListener('click', runTest);
   $('#copyIp').addEventListener('click', () => info?.ip && copy(info.ip));
+  $('#hdrIp').addEventListener('click', () => info?.ip && copy(info.ip));
   $('#copyRes').addEventListener('click', () => lastResult && copy(resultText(lastResult)));
   $('#clearHist').addEventListener('click', () => { saveHist([]); renderHist(); });
   $('#envInfo').textContent = `${CFG.downStreams} потоков загрузки · ${CFG.upStreams} потока отдачи · ${CFG.phaseMs / 1000} с на фазу`;

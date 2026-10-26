@@ -61,6 +61,7 @@ body {
 
 .top, main, footer { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
 .top { display: flex; align-items: center; justify-content: space-between; height: 68px; }
+.hdr-ip { display: none; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; letter-spacing: -.01em; }
 .icon-btn {
   display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 12px;
@@ -296,32 +297,58 @@ footer a { color: inherit; }
   h2 { font-size: 15px; margin-bottom: 12px; }
   .h2row { margin-bottom: 12px; }
 
-  .conn { gap: 12px; }
-  .conn-grid { gap: 10px 12px; }
-  .ip { font-size: 21px; }
+  /* IP — плашкой в шапке, подробности — компактным списком под тестом */
+  .hdr-ip:not([hidden]) {
+    display: block; margin-left: auto; margin-right: 10px; max-width: 58vw; padding: 6px 10px; border-radius: 10px;
+    border: 1px solid var(--card-b); background: var(--card); color: var(--text); font: 600 13px/1.2 ui-monospace, Menlo, monospace;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+  }
+  .test { order: -1; }
+  .conn { gap: 8px; }
+  .conn-ip .label { display: none; }
+  .ip-row { margin-top: 0; gap: 8px; }
+  .ip { font-size: 18px; }
+  .conn-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .kv { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 7px 0; border-top: 1px solid var(--faint); }
+  .kv .label { flex: none; }
+  .kv .val { margin-top: 0; text-align: right; font-size: 14px; }
+  .kv .val small { display: inline; margin-left: 6px; font-size: 12px; }
 
-  .test { gap: 14px; }
-  .gauge-wrap { max-width: 290px; }
-  .start { width: 112px; height: 112px; font-size: 18px; }
-  .readout { margin-top: calc(50% + 20px); }
-  .big { font-size: 38px; }
-  .lat-big b { font-size: 42px; }
-  .lat-sub { font-size: 12px; }
-  .lat-viz { margin-top: 10px; max-width: 220px; }
-  .lat-viz.bars { height: 60px; }
-  .lat-viz.cells { gap: 2px; }
-  .steps { gap: 6px; }
+  /* тест: спидометр слева, цифры справа, этапы и график на всю ширину */
+  .test { grid-template-columns: 52% minmax(0, 1fr); grid-template-areas: "gauge head" "gauge sub" "steps steps" "chart chart" "legend legend" "again again"; gap: 10px 12px; align-items: center; }
+  .gauge-col, .live { display: contents; }
+  .gauge-wrap { grid-area: gauge; max-width: none; }
+  .steps { grid-area: steps; max-width: none; gap: 6px; margin-top: 2px; }
+  .headline { grid-area: head; grid-template-columns: minmax(0, 1fr); gap: 8px; align-self: end; }
+  .subline { grid-area: sub; grid-template-columns: minmax(0, 1fr); gap: 2px; align-self: start; }
+  .chart-box { grid-area: chart; height: 110px; }
+  .chart-legend { grid-area: legend; margin-top: -4px; }
+  .again-row { grid-area: again; }
+
+  .g-ticks text { font-size: 17px; }
+  .start { width: 78px; height: 78px; font-size: 14px; }
+  .readout { margin-top: calc(50% + 10px); }
+  .phase { font-size: 9.5px; }
+  .big { font-size: 21px; }
+  .unit { font-size: 11px; }
+  .lat-big b { font-size: 26px; }
+  .lat-big span { font-size: 12px; }
+  .lat-sub { font-size: 10.5px; white-space: nowrap; }
+  .lat-viz { margin-top: 6px; max-width: 92%; }
+  .lat-viz.bars { height: 36px; gap: 2px; }
+  .lat-viz.cells { grid-template-columns: repeat(25, 1fr); gap: 1.5px; }
   .steps li { font-size: 11.5px; gap: 4px; }
 
-  .live { gap: 12px; }
-  .headline { gap: 10px; }
-  .hm { padding: 10px 12px; border-radius: 14px; }
-  .hm-label { font-size: 12px; }
-  .hm-val b { font-size: 26px; }
-  .subline { gap: 10px; }
-  .sm b { font-size: 18px; }
-  .chart-box { height: 120px; }
-  .chart-legend { margin-top: -6px; }
+  .hm { padding: 7px 10px; border-radius: 12px; }
+  .hm-label { font-size: 11.5px; gap: 6px; }
+  .hm-label i { width: 6px; height: 6px; }
+  .hm-val { margin-top: 1px; gap: 4px; }
+  .hm-val b { font-size: 21px; }
+  .hm-val span { font-size: 11px; }
+  .sm { display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px; }
+  .sm .label { font-size: 12px; }
+  .sm > div:last-child { font-size: 12px; }
+  .sm b { font-size: 14px; }
   .btn { padding: 8px 14px; font-size: 14px; }
 
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
