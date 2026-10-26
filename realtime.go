@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/coder/websocket"
@@ -15,6 +16,7 @@ import (
 )
 
 // handleWS — эхо по WebSocket для измерения задержки (в покое и под нагрузкой).
+// Сообщение «u<id теста>» — запрос счётчика отдачи, ответ «u<id>:<принято байт>».
 func handleWS(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
@@ -28,6 +30,13 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		typ, msg, err := c.Read(ctx)
 		if err != nil {
 			return
+		}
+		if typ == websocket.MessageText && len(msg) > 1 && msg[0] == 'u' {
+			var n int64
+			if uc := uploads.get(string(msg[1:]), false); uc != nil {
+				n = uc.n.Load()
+			}
+			msg = strconv.AppendInt(append(msg, ':'), n, 10)
 		}
 		if err := c.Write(ctx, typ, msg); err != nil {
 			return

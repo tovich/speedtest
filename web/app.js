@@ -260,6 +260,7 @@ class Pinger {
       ws.onopen = () => { clearTimeout(timer); resolve(); };
       ws.onerror = () => { clearTimeout(timer); reject(new Error('ws error')); };
       ws.onmessage = e => {
+        if (e.data[0] === 'u') { this.onUpload?.(+e.data.slice(e.data.indexOf(':') + 1)); return; }
         const t1 = now();
         const cb = this.pending.get(+e.data);
         if (cb) { this.pending.delete(+e.data); cb(t1); }
@@ -363,7 +364,7 @@ async function measureUdp(view) {
 // ---------- загрузка ----------
 function speedTracker(onTick) {
   const t0 = now();
-  let bytes = 0, peak = 0;
+  let bytes = 0, peak = 0, tSet = null;
   const samples = [[0, 0]];
   const iv = setInterval(() => {
     const t = now() - t0;
@@ -378,9 +379,11 @@ function speedTracker(onTick) {
   }, 100);
   return {
     add(n) { bytes += n; },
+    // абсолютный счётчик от сервера; итог считается на момент последнего ответа
+    set(n) { if (n >= bytes) { bytes = n; tSet = now() - t0; } },
     finish() {
       clearInterval(iv);
-      const tEnd = now() - t0;
+      const tEnd = tSet ?? now() - t0;
       samples.push([tEnd, bytes]);
       const g = samples.find(s => s[0] >= CFG.graceMs) || samples[0];
       const avg = tEnd > g[0] ? (bytes - g[1]) * 8 / (tEnd - g[0]) / 1000 : 0;
@@ -431,26 +434,34 @@ function getUploadBlob() {
   return uploadBlob;
 }
 
-async function measureUpload(onTick) {
+async function measureUpload(onTick, pinger) {
   const blob = getUploadBlob();
   const tr = speedTracker(onTick);
   const live = new Set();
   let stop = false, errStatus = 0, okCount = 0;
+  // байты, принятые сервером, — по WebSocket; без него — прогресс XHR (с ложным всплеском в начале)
+  const id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  const bySrv = pinger?.ws?.readyState === 1;
+  let poll;
+  if (bySrv) {
+    pinger.onUpload = n => tr.set(n);
+    poll = setInterval(() => { if (pinger.ws.readyState === 1) pinger.ws.send('u' + id); }, 100);
+  }
   const worker = () => new Promise(resolve => {
     const next = () => {
       if (stop) return resolve();
       const xhr = new XMLHttpRequest();
       let last = 0;
-      xhr.upload.onprogress = e => { tr.add(e.loaded - last); last = e.loaded; };
+      if (!bySrv) xhr.upload.onprogress = e => { tr.add(e.loaded - last); last = e.loaded; };
       xhr.onloadend = () => {
         live.delete(xhr);
         if (stop) return resolve();
-        if (xhr.status === 200) { okCount++; tr.add(blob.size - last); return next(); }
+        if (xhr.status === 200) { okCount++; if (!bySrv) tr.add(blob.size - last); return next(); }
         errStatus = xhr.status || errStatus;
-        tr.add(-last); // отвергнутый запрос — не трафик
+        if (!bySrv) tr.add(-last); // отвергнутый запрос — не трафик
         setTimeout(next, 200);
       };
-      xhr.open('POST', `/api/upload?n=${Math.random()}`);
+      xhr.open('POST', `/api/upload?id=${id}&n=${Math.random()}`);
       live.add(xhr);
       xhr.send(blob);
     };
@@ -459,6 +470,8 @@ async function measureUpload(onTick) {
   const workers = Array.from({ length: CFG.upStreams }, worker);
   await sleep(CFG.phaseMs);
   stop = true;
+  clearInterval(poll);
+  if (bySrv) pinger.onUpload = null;
   const res = tr.finish();
   live.forEach(x => x.abort());
   await Promise.allSettled(workers);
@@ -785,7 +798,7 @@ async function runTest() {
       gauge.set(mbps); headline.up.set(mbps);
       chart.push('up', t / 1000, mbps);
       steps.set('up', t / CFG.phaseMs);
-    });
+    }, pinger);
     const loadedUp = stopUL();
     res.up = up.mbps;
     res.loadedUp = median(loadedUp);

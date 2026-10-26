@@ -22,6 +22,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -94,6 +96,7 @@ func main() {
 
 	s.geo = NewGeoDB(cfg.DataDir, cfg.GeoCity)
 	go s.geo.Run(ctx)
+	go uploads.cleanup(ctx)
 
 	rtc, err := newRTCServer(cfg.RTCPort, cfg.RTCPublicIP)
 	if err != nil {
@@ -233,11 +236,93 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleUpload читает тело запроса и выбрасывает его.
+// handleUpload читает тело запроса и выбрасывает его. Если передан id теста,
+// принятые байты складываются в его счётчик — страница спрашивает его по WebSocket.
 func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	n, _ := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxUpload))
+	var body io.Reader = http.MaxBytesReader(w, r.Body, maxUpload)
+	if c := uploads.get(r.URL.Query().Get("id"), true); c != nil {
+		body = countingReader{body, &c.n}
+	}
+	n, _ := io.Copy(io.Discard, body)
 	writeJSON(w, map[string]any{"bytes": n, "ms": time.Since(start).Milliseconds()})
+}
+
+// ---- счётчики отдачи ----
+// Браузер сообщает об отправленных байтах, когда кладёт их в буфер системы, а не когда они
+// ушли в сеть: в начале отдачи это даёт ложный всплеск. Поэтому отдачу считает сервер.
+
+type uploadCounter struct {
+	n    atomic.Int64 // принято байт
+	seen atomic.Int64 // unix-время последнего обращения
+}
+
+type uploadRegistry struct {
+	mu sync.Mutex
+	m  map[string]*uploadCounter
+}
+
+var uploads = &uploadRegistry{m: map[string]*uploadCounter{}}
+
+func validTestID(id string) bool {
+	if len(id) < 8 || len(id) > 32 {
+		return false
+	}
+	for _, c := range id {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func (u *uploadRegistry) get(id string, create bool) *uploadCounter {
+	if !validTestID(id) {
+		return nil
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	c := u.m[id]
+	if c == nil && create && len(u.m) < 10000 {
+		c = &uploadCounter{}
+		u.m[id] = c
+	}
+	if c != nil {
+		c.seen.Store(time.Now().Unix())
+	}
+	return c
+}
+
+// cleanup удаляет счётчики тестов, к которым не обращались больше двух минут.
+func (u *uploadRegistry) cleanup(ctx context.Context) {
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		old := time.Now().Add(-2 * time.Minute).Unix()
+		u.mu.Lock()
+		for id, c := range u.m {
+			if c.seen.Load() < old {
+				delete(u.m, id)
+			}
+		}
+		u.mu.Unlock()
+	}
+}
+
+type countingReader struct {
+	r io.Reader
+	n *atomic.Int64
+}
+
+func (c countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n.Add(int64(n))
+	return n, err
 }
 
 // ---- статика: всё держим в памяти, заранее сжато gzip ----
