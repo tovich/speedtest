@@ -138,7 +138,11 @@ func healthcheck(addr string) int {
 	_, port, _ := net.SplitHostPort(addr)
 	c := http.Client{Timeout: 3 * time.Second}
 	resp, err := c.Get("http://127.0.0.1:" + port + "/healthz")
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
+		return 1
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
 		return 1
 	}
 	return 0
@@ -146,7 +150,8 @@ func healthcheck(addr string) int {
 
 func noStore(w http.ResponseWriter) {
 	h := w.Header()
-	h.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	// no-transform запрещает прокси сжимать или перекодировать ответ
+	h.Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0, no-transform")
 	h.Set("Pragma", "no-cache")
 }
 
@@ -175,6 +180,9 @@ func (s *server) clientIP(r *http.Request) netip.Addr {
 	return a.Unmap()
 }
 
+// адреса операторского NAT (RFC 6598): в GeoIP их нет, для посетителя это «локальная сеть»
+var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+
 type infoResponse struct {
 	IP       string   `json:"ip"`
 	Version  int      `json:"version"`
@@ -195,7 +203,7 @@ func (s *server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	if ip.Is6() {
 		resp.Version = 6
 	}
-	resp.Private = ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || !ip.IsValid()
+	resp.Private = !ip.IsValid() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || cgnat.Contains(ip)
 	if !resp.Private {
 		resp.Geo = s.geo.Lookup(ip)
 	}
@@ -216,7 +224,6 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
 	h.Set("Content-Length", strconv.FormatInt(size, 10))
-	h.Set("Content-Encoding", "identity")
 	for size > 0 {
 		n := min(size, int64(len(s.noise)))
 		if _, err := w.Write(s.noise[:n]); err != nil {

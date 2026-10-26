@@ -378,10 +378,16 @@ function speedTracker(onTick) {
 async function measureDownload(onTick) {
   const ctrl = new AbortController();
   const tr = speedTracker(onTick);
+  const ttfb = [];
+  let errStatus = 0, okCount = 0;
   const worker = async () => {
     while (!ctrl.signal.aborted) {
       try {
+        const t0 = now();
         const r = await fetch(`/api/download?size=${CFG.downChunk}&n=${Math.random()}`, { signal: ctrl.signal, cache: 'no-store' });
+        if (!r.ok) { errStatus = r.status; r.body?.cancel(); throw new Error('HTTP ' + r.status); }
+        okCount++;
+        ttfb.push(now() - t0);
         const reader = r.body.getReader();
         for (;;) {
           const { done, value } = await reader.read();
@@ -397,7 +403,8 @@ async function measureDownload(onTick) {
   await sleep(CFG.phaseMs);
   ctrl.abort();
   await Promise.allSettled(workers);
-  return tr.finish();
+  if (!okCount) throw new Error(`загрузка не удалась${errStatus ? ' (HTTP ' + errStatus + ')' : ''}`);
+  return { ...tr.finish(), ttfb: median(ttfb) };
 }
 
 let uploadBlob;
@@ -414,7 +421,7 @@ async function measureUpload(onTick) {
   const blob = getUploadBlob();
   const tr = speedTracker(onTick);
   const live = new Set();
-  let stop = false;
+  let stop = false, errStatus = 0, okCount = 0;
   const worker = () => new Promise(resolve => {
     const next = () => {
       if (stop) return resolve();
@@ -423,9 +430,11 @@ async function measureUpload(onTick) {
       xhr.upload.onprogress = e => { tr.add(e.loaded - last); last = e.loaded; };
       xhr.onloadend = () => {
         live.delete(xhr);
-        if (xhr.status === 200) tr.add(blob.size - last);
         if (stop) return resolve();
-        xhr.status === 200 ? next() : setTimeout(next, 200);
+        if (xhr.status === 200) { okCount++; tr.add(blob.size - last); return next(); }
+        errStatus = xhr.status || errStatus;
+        tr.add(-last); // отвергнутый запрос — не трафик
+        setTimeout(next, 200);
       };
       xhr.open('POST', `/api/upload?n=${Math.random()}`);
       live.add(xhr);
@@ -439,15 +448,16 @@ async function measureUpload(onTick) {
   const res = tr.finish();
   live.forEach(x => x.abort());
   await Promise.allSettled(workers);
+  // медленный канал может не успеть завершить ни одного запроса — это не ошибка
+  if (errStatus && !okCount) throw new Error(`отдача не удалась (HTTP ${errStatus})${errStatus === 413 ? ': на прокси нужен client_max_body_size 0' : ''}`);
   return res;
 }
 
-// TTFB запросов загрузки из Resource Timing
-function downloadTTFB() {
-  const e = performance.getEntriesByType('resource').filter(r => r.name.includes('/api/download') && r.responseStart > 0);
-  const v = median(e.map(r => r.responseStart - r.requestStart));
-  performance.clearResourceTimings();
-  return { ttfb: v, proto: e[0]?.nextHopProtocol };
+// протокол, по которому браузер ходит к серверу
+function httpProto() {
+  const e = performance.getEntriesByType('resource').find(r => r.name.includes('/api/info') && r.nextHopProtocol)
+    || performance.getEntriesByType('navigation')[0];
+  return { 'http/1.1': 'HTTP/1.1', h2: 'HTTP/2', h3: 'HTTP/3' }[e?.nextHopProtocol] || '';
 }
 
 // ---------- оценки ----------
@@ -471,6 +481,7 @@ function qualities(r) {
     r.down >= 25 && loaded < 150 && loss < 1 ? [4, '4K без буферизации'] :
     r.down >= 10 ? [3, 'Full HD без пауз'] :
     r.down >= 4 ? [2, 'SD/HD, возможна буферизация'] : [1, 'Видео будет прерываться'];
+  if (!ok(r.ping)) return { stream, game: null, call: null };
   const game =
     r.ping < 30 && r.jitter < 5 && loss < 0.5 && r.bloat < 30 ? [4, 'Минимальная задержка'] :
     r.ping < 60 && r.jitter < 15 && loss < 1.5 ? [3, 'Комфортно для большинства игр'] :
@@ -617,19 +628,25 @@ async function runTest() {
   for (const k of ['stream', 'game', 'call']) setQuality(k, 0, '—', 'Ожидание теста');
   setQuality('bloat', 0, '—', 'Рост задержки под нагрузкой');
   progressBase = 0;
-  performance.clearResourceTimings();
 
   const pinger = new Pinger();
   try {
     // 1. задержка в покое
     await setPhase('Пинг', 'ping');
-    await pinger.open();
-    const lat = await measureLatency(pinger, (rtt, f) => { gauge.set(rtt); $('#vPing').textContent = fmtMs(rtt); setProgress('ping', f); });
-    Object.assign(res, { ping: lat.median, jitter: lat.jitter });
-    $('#vPing').textContent = fmtMs(lat.median);
-    $('#vJitter').textContent = fmtMs(lat.jitter);
-    setMetric('ping', fmtMs(lat.median), `мин ${fmtMs(lat.min)} · ср ${fmtMs(lat.avg)} · макс ${fmtMs(lat.max)}`);
-    setMetric('jitter', fmtMs(lat.jitter), `σ ${fmtMs(lat.stdev)} мс · ${CFG.pingCount} замеров`);
+    let wsOk = true;
+    try { await pinger.open(); } catch { wsOk = false; }
+    if (wsOk) {
+      const lat = await measureLatency(pinger, (rtt, f) => { gauge.set(rtt); $('#vPing').textContent = fmtMs(rtt); setProgress('ping', f); });
+      Object.assign(res, { ping: lat.median, jitter: lat.jitter });
+      $('#vPing').textContent = fmtMs(lat.median);
+      $('#vJitter').textContent = fmtMs(lat.jitter);
+      setMetric('ping', fmtMs(lat.median), `мин ${fmtMs(lat.min)} · ср ${fmtMs(lat.avg)} · макс ${fmtMs(lat.max)}`);
+      setMetric('jitter', fmtMs(lat.jitter), `σ ${fmtMs(lat.stdev)} мс · ${CFG.pingCount} замеров`);
+    } else {
+      $('#vPing').textContent = $('#vJitter').textContent = 'н/д';
+      setMetric('ping', 'н/д', 'WebSocket недоступен — проверьте прокси');
+      setMetric('jitter', 'н/д', '');
+    }
     progressBase += PHASE_W.ping;
 
     // 2. потери пакетов
@@ -664,8 +681,7 @@ async function runTest() {
     headline.down.set(down.mbps);
     setMetric('down', fmtSpeed(down.mbps), `пик ${fmtSpeed(down.peak)} Мбит/с · ${CFG.downStreams} потоков`);
     setMetric('loadedDown', fmtMs(res.loadedDown), ok(res.loadedDown) ? `+${fmtMs(Math.max(0, res.loadedDown - res.ping))} мс к покою · джиттер ${fmtMs(jitterOf(loadedDown))}` : '');
-    const tt = downloadTTFB();
-    setMetric('ttfb', fmtMs(tt.ttfb), 'медиана по запросам загрузки');
+    setMetric('ttfb', fmtMs(down.ttfb), 'медиана по запросам загрузки');
     progressBase += PHASE_W.down;
 
     // 4. отдача
@@ -689,17 +705,18 @@ async function runTest() {
     // итоги
     res.duration = (now() - t0) / 1000;
     setMetric('data', fmtBytes(down.bytes + up.bytes), `↓ ${fmtBytes(down.bytes)} · ↑ ${fmtBytes(up.bytes)}`);
-    const nav = performance.getEntriesByType('navigation')[0];
-    const proto = { 'http/1.1': 'HTTP/1.1', h2: 'HTTP/2', h3: 'HTTP/3' }[tt.proto || nav?.nextHopProtocol] || '';
-    setMetric('proto', proto || '—', `${location.protocol === 'https:' ? 'TLS · ' : ''}IPv${info?.version ?? '?'}`);
+    setMetric('proto', httpProto() || '—', `${location.protocol === 'https:' ? 'TLS · ' : ''}IPv${info?.version ?? '?'}`);
     setMetric('duration', res.duration.toFixed(1), 'пинг, UDP, загрузка, отдача');
 
-    res.bloat = Math.max(res.loadedDown || 0, res.loadedUp || 0) - res.ping;
+    const loadedMax = Math.max(...[res.loadedDown, res.loadedUp].filter(ok));
+    res.bloat = ok(loadedMax) && ok(res.ping) ? loadedMax - res.ping : NaN;
     const [grade, lvl] = bloatGrade(res.bloat);
     res.grade = grade;
     setQuality('bloat', lvl, lvl ? `${LEVEL_WORD[lvl]} · ${grade}` : '—',
       !ok(res.bloat) ? 'Нет данных' : res.bloat < 1 ? 'Задержка под нагрузкой не растёт' : `+${fmtMs(res.bloat)} мс к задержке под нагрузкой`);
-    for (const [k, [level, detail]] of Object.entries(qualities(res))) setQuality(k, level, LEVEL_WORD[level], detail);
+    for (const [k, q] of Object.entries(qualities(res))) {
+      q ? setQuality(k, q[0], LEVEL_WORD[q[0]], q[1]) : setQuality(k, 0, '—', 'Нет данных о задержке');
+    }
 
     lastResult = res;
     const h = loadHist();

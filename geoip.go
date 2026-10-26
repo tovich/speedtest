@@ -126,16 +126,16 @@ func (g *GeoDB) Run(ctx context.Context) {
 func (g *GeoDB) refresh(kind string, slot *atomic.Pointer[maxminddb.Reader]) {
 	file := filepath.Join(g.dir, "dbip-"+kind+"-lite.mmdb")
 	st, err := os.Stat(file)
-	stale := err != nil || time.Since(st.ModTime()) > 32*24*time.Hour
-	if stale {
+	updated := false
+	if err != nil || time.Since(st.ModTime()) > 32*24*time.Hour {
 		log.Printf("geoip: скачиваю базу %s…", kind)
 		if err := download(kind, file); err != nil {
 			log.Printf("geoip: %s: %v", kind, err)
 		} else {
-			slot.Store(nil) // форсируем переоткрытие ниже
+			updated = true
 		}
 	}
-	if slot.Load() != nil {
+	if slot.Load() != nil && !updated {
 		return
 	}
 	db, err := maxminddb.Open(file)
@@ -143,8 +143,8 @@ func (g *GeoDB) refresh(kind string, slot *atomic.Pointer[maxminddb.Reader]) {
 		log.Printf("geoip: %s: %v", kind, err)
 		return
 	}
-	old := slot.Swap(db)
-	if old != nil {
+	// старую базу закрываем с задержкой: её ещё могут читать текущие запросы
+	if old := slot.Swap(db); old != nil {
 		time.AfterFunc(time.Minute, func() { old.Close() })
 	}
 	log.Printf("geoip: база %s загружена (%s)", kind, time.Unix(int64(db.Metadata.BuildEpoch), 0).Format("2006-01-02"))
