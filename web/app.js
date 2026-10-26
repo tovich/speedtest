@@ -659,9 +659,6 @@ async function loadInfo() {
   }
   $('#ip').textContent = info.ip;
   $('#ip').classList.remove('skel');
-  const hdr = $('#hdrIp');
-  hdr.textContent = `${flagEmoji(info.geo?.countryCode)} ${info.ip}`.trim();
-  hdr.hidden = false;
   const ver = $('#ipVer');
   ver.textContent = 'IPv' + info.version;
   ver.hidden = false;
@@ -865,7 +862,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#startBtn').addEventListener('click', runTest);
   $('#copyIp').addEventListener('click', () => info?.ip && copy(info.ip));
-  $('#hdrIp').addEventListener('click', () => info?.ip && copy(info.ip));
   $('#copyRes').addEventListener('click', () => lastResult && copy(resultText(lastResult)));
   $('#clearHist').addEventListener('click', () => { saveHist([]); renderHist(); });
 });
