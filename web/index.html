@@ -52,7 +52,7 @@
           <linearGradient id="gDown" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#3b82f6"/></linearGradient>
           <linearGradient id="gUp" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#c084fc"/><stop offset="1" stop-color="#f472b6"/></linearGradient>
           <linearGradient id="gPing" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#fb923c"/></linearGradient>
-          <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <filter id="glow" x="-40%" y="-40%" width="180%" height="180%" filterUnits="objectBoundingBox"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
         </defs>
         <path class="g-track" id="gTrack"/>
         <path class="g-fill" id="gFill" filter="url(#glow)"/>
@@ -84,7 +84,7 @@
         <canvas id="chart" aria-label="График скорости"></canvas>
       </div>
       <div class="chart-legend"><span class="lg down">Загрузка</span><span class="lg up">Отдача</span><span class="lg ping">Задержка под нагрузкой</span></div>
-      <div class="again-row"><button class="btn" id="againBtn" hidden>Повторить тест</button><button class="btn ghost" id="copyRes" hidden>Скопировать результат</button></div>
+      <div class="again-row"><button class="btn ghost" id="copyRes" hidden>Скопировать результат</button></div>
     </div>
   </section>
 

@@ -127,7 +127,9 @@ const gauge = {
     this.ticks = $('#gTicks');
     $('#gTrack').setAttribute('d', this.arc(0, 1));
     this.setScale(SCALES.speed);
-    this.tween = new Tween(v => this.render(v), 160);
+    // стрелка анимируется по положению на шкале (шкала нелинейная), число — по значению
+    this.tween = new Tween(f => this.render(f), 180);
+    this.num = new Tween(v => { $('#bigVal').textContent = this.mode === 'ping' ? fmtMs(v) : fmtSpeed(v); }, 180);
   },
   pt(angle, r) {
     const a = angle * Math.PI / 180;
@@ -167,16 +169,23 @@ const gauge = {
     this.fill.style.stroke = `url(#${grad})`;
     this.setScale(mode === 'ping' ? SCALES.ping : SCALES.speed);
     this.tween.set(0, true);
+    this.num.set(0, true);
   },
   set(v) {
     if (this.mode !== 'ping' && v > 900 && this.scale === SCALES.speed) this.setScale(SCALES.speedHi);
-    this.tween.set(v);
+    this.tween.set(this.frac(v));
+    this.num.set(v);
   },
-  render(v) {
-    const f = this.frac(v);
+  // плавно опустить стрелку к нулю перед сменой фазы
+  async drop() {
+    if (this.tween.cur <= 0.002) return;
+    this.tween.set(0);
+    this.num.set(0);
+    await sleep(600);
+  },
+  render(f) {
     this.fill.setAttribute('d', this.arc(0, f));
     this.needle.style.transform = `rotate(${this.a0 + this.sweep * f + 90}deg)`;
-    $('#bigVal').textContent = this.mode === 'ping' ? fmtMs(v) : fmtSpeed(v);
   },
 };
 
@@ -298,7 +307,7 @@ async function measureLatency(pinger, onSample) {
 }
 
 // ---------- потери пакетов (WebRTC, UDP без повторов) ----------
-async function measureUdp(onProgress) {
+async function measureUdp(onProgress, onRtt) {
   const pc = new RTCPeerConnection({ iceServers: [] });
   try {
     const dc = pc.createDataChannel('loss', { ordered: false, maxRetransmits: 0 });
@@ -319,7 +328,7 @@ async function measureUdp(onProgress) {
     const N = CFG.udpPackets, sent = new Float64Array(N), rtt = new Float64Array(N).fill(NaN);
     dc.onmessage = e => {
       const i = new DataView(e.data).getUint32(0);
-      if (i < N && !ok(rtt[i])) rtt[i] = now() - sent[i];
+      if (i < N && !ok(rtt[i])) { rtt[i] = now() - sent[i]; onRtt(rtt[i]); }
     };
     const buf = new ArrayBuffer(64);
     for (let i = 0; i < N; i++) {
@@ -511,8 +520,9 @@ const headline = {
   },
 };
 
-function setPhase(name, mode) {
+async function setPhase(name, mode) {
   $('#phase').textContent = name;
+  if (gauge.mode !== mode) await gauge.drop();
   $('#bigUnit').textContent = mode === 'ping' ? 'мс' : 'Мбит/с';
   gauge.setMode(mode);
   $('#hmDown').classList.toggle('active', mode === 'down');
@@ -590,7 +600,7 @@ async function runTest() {
   document.body.classList.add('testing');
   $('#startBtn').classList.add('out');
   $('#readout').hidden = false;
-  $('#againBtn').hidden = $('#copyRes').hidden = true;
+  $('#copyRes').hidden = true;
   headline.reset();
   chart.reset();
   renderMetricsSkeleton();
@@ -603,7 +613,7 @@ async function runTest() {
   const pinger = new Pinger();
   try {
     // 1. задержка в покое
-    setPhase('Пинг', 'ping');
+    await setPhase('Пинг', 'ping');
     await pinger.open();
     const lat = await measureLatency(pinger, (rtt, f) => { gauge.set(rtt); $('#vPing').textContent = fmtMs(rtt); setProgress('ping', f); });
     Object.assign(res, { ping: lat.median, jitter: lat.jitter });
@@ -614,10 +624,10 @@ async function runTest() {
     progressBase += PHASE_W.ping;
 
     // 2. потери пакетов
-    setPhase('Потери пакетов', 'ping');
+    await setPhase('Потери пакетов', 'ping');
     try {
       if (!info?.udp || !window.RTCPeerConnection) throw new Error('UDP-тест недоступен');
-      const udp = await measureUdp(f => setProgress('udp', f));
+      const udp = await measureUdp(f => setProgress('udp', f), rtt => gauge.set(rtt));
       Object.assign(res, { loss: udp.loss, udpRtt: udp.rtt, udpJitter: udp.jitter });
       $('#vLoss').textContent = fmtPct(udp.loss);
       setMetric('loss', fmtPct(udp.loss), `получено ${udp.received} из ${udp.sent} пакетов`);
@@ -630,7 +640,7 @@ async function runTest() {
     progressBase += PHASE_W.udp;
 
     // 3. загрузка
-    setPhase('Загрузка', 'down');
+    await setPhase('Загрузка', 'down');
     headline.downSet = true;
     const tDown = now();
     const stopDL = pinger.startLoaded(rtt => chart.push('ping', (now() - tDown) / 1000, rtt));
@@ -650,7 +660,7 @@ async function runTest() {
     progressBase += PHASE_W.down;
 
     // 4. отдача
-    setPhase('Отдача', 'up');
+    await setPhase('Отдача', 'up');
     headline.upSet = true;
     const tUp = now();
     const stopUL = pinger.startLoaded(rtt => chart.push('ping', (now() - tUp) / 1000, rtt));
@@ -693,20 +703,22 @@ async function runTest() {
     h.unshift(res);
     saveHist(h);
     renderHist();
-    setPhase('Итог ↓', 'down');
-    gauge.set(res.down);
   } catch (e) {
     console.error(e);
     toast('Тест прерван: ' + (e.message || e));
     $('#phase').textContent = 'Ошибка';
   } finally {
     pinger.close();
-    running = false;
-    document.body.classList.remove('testing');
-    $('#againBtn').hidden = false;
-    $('#copyRes').hidden = !lastResult;
     $('#hmDown').classList.remove('active');
     $('#hmUp').classList.remove('active');
+    $('#copyRes').hidden = !lastResult;
+    // итоги остаются в карточках и на графике, спидометр возвращается к кнопке
+    await gauge.drop();
+    document.body.classList.remove('testing');
+    $('#readout').hidden = true;
+    $('#startBtn span').textContent = 'Ещё раз';
+    $('#startBtn').classList.remove('out');
+    running = false;
   }
 }
 
@@ -733,7 +745,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setTimeout(getUploadBlob, 1500); // подготовим данные для отдачи заранее
 
   $('#startBtn').addEventListener('click', runTest);
-  $('#againBtn').addEventListener('click', runTest);
   $('#copyIp').addEventListener('click', () => info?.ip && copy(info.ip));
   $('#copyRes').addEventListener('click', () => lastResult && copy(resultText(lastResult)));
   $('#clearHist').addEventListener('click', () => { saveHist([]); renderHist(); });

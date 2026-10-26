@@ -71,7 +71,7 @@ body {
 .icon-btn:active { transform: scale(.94); }
 .icon-btn.sm { width: 30px; height: 30px; border-radius: 9px; }
 
-main { display: grid; gap: 18px; padding-bottom: 28px; }
+main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding-bottom: 28px; }
 .card {
   background: var(--card); border: 1px solid var(--card-b); border-radius: var(--r);
   padding: 22px; box-shadow: var(--shadow);
