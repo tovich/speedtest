@@ -18,7 +18,34 @@
 
 История последних 30 тестов хранится в браузере пользователя.
 
-## Запуск
+## Установка одной командой
+
+На любом Linux-сервере (amd64 или arm64; Docker поставится сам, если его нет):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tovich/speedtest/main/install.sh | sudo bash
+```
+
+Страница откроется на `http://<сервер>:8080`. Параметры передаются после `bash -s --`:
+
+```bash
+# свой домен с HTTPS (порты 80 и 443 должны быть свободны)
+curl -fsSL https://raw.githubusercontent.com/tovich/speedtest/main/install.sh | sudo bash -s -- --domain speed.example.com
+
+# за Nginx Proxy Manager: подключиться к его docker-сети
+curl -fsSL https://raw.githubusercontent.com/tovich/speedtest/main/install.sh | sudo bash -s -- --proxy-network nginx-proxy_default
+
+# название и город сервера
+... | sudo bash -s -- --name "Speedtest Москва" --location Москва
+```
+
+Все параметры: `--help`. Установка в `/opt/speedtest`, настройки — в `/opt/speedtest/.env`.
+Повторный запуск той же команды обновляет сервис до свежей версии и сохраняет настройки.
+Удаление: `... | sudo bash -s -- --uninstall`.
+
+Образ `ghcr.io/tovich/speedtest` собирается GitHub Actions при каждом коммите в `main`.
+
+## Запуск из исходников
 
 ```bash
 cp .env.example .env     # по желанию: название, город сервера
