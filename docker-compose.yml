@@ -18,6 +18,8 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-false}
       # true — база с городами (~130 МБ), false — только страны (~10 МБ)
       GEOIP_CITY: ${GEOIP_CITY:-true}
+      # одновременных потоков загрузки/отдачи с одного IP (0 — без ограничения)
+      MAX_STREAMS_PER_IP: ${MAX_STREAMS_PER_IP:-32}
     volumes:
       - geoip:/data
     ulimits:

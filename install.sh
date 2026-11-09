@@ -47,14 +47,14 @@ main() {
 
 # ---- настройки: сначала прошлые из .env, поверх — параметры командной строки ----
 HTTP_PORT=8080 RTC_UDP_PORT=3479 SERVER_NAME=Speedtest SERVER_LOCATION="" RTC_PUBLIC_IP=""
-TRUST_PROXY=false GEOIP_CITY=true DOMAIN="" PROXY_NETWORK=""
+TRUST_PROXY=false GEOIP_CITY=true DOMAIN="" PROXY_NETWORK="" MAX_STREAMS_PER_IP=32
 
 if [[ -f "$DIR/.env" ]]; then
   while IFS='=' read -r k v; do
     [[ "$k" =~ ^[A-Z_]+$ ]] || continue
     v="${v%\"}"; v="${v#\"}"
     case "$k" in
-      HTTP_PORT|RTC_UDP_PORT|SERVER_NAME|SERVER_LOCATION|RTC_PUBLIC_IP|TRUST_PROXY|GEOIP_CITY|DOMAIN|PROXY_NETWORK) printf -v "$k" '%s' "$v" ;;
+      HTTP_PORT|RTC_UDP_PORT|SERVER_NAME|SERVER_LOCATION|RTC_PUBLIC_IP|TRUST_PROXY|GEOIP_CITY|DOMAIN|PROXY_NETWORK|MAX_STREAMS_PER_IP) printf -v "$k" '%s' "$v" ;;
     esac
   done < "$DIR/.env"
 fi
@@ -81,6 +81,7 @@ done
 
 [[ $EUID -eq 0 ]] || die "нужны права root: запустите через sudo"
 [[ "$HTTP_PORT" =~ ^[0-9]+$ && "$RTC_UDP_PORT" =~ ^[0-9]+$ ]] || die "порт должен быть числом"
+[[ "$MAX_STREAMS_PER_IP" =~ ^[0-9]+$ ]] || MAX_STREAMS_PER_IP=32
 [[ -z "$DOMAIN" || "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || die "некорректный домен: $DOMAIN"
 [[ -z "$PROXY_NETWORK" || "$PROXY_NETWORK" =~ ^[A-Za-z0-9_.-]+$ ]] || die "некорректное имя сети: $PROXY_NETWORK"
 # в .env значения в кавычках — убираем то, что может их сломать
@@ -158,6 +159,7 @@ SERVER_LOCATION="$SERVER_LOCATION"
 RTC_PUBLIC_IP=$RTC_PUBLIC_IP
 TRUST_PROXY=$TRUST_PROXY
 GEOIP_CITY=$GEOIP_CITY
+MAX_STREAMS_PER_IP=$MAX_STREAMS_PER_IP
 DOMAIN=$DOMAIN
 PROXY_NETWORK=$PROXY_NETWORK
 EOF
@@ -181,6 +183,7 @@ EOF
       RTC_PUBLIC_IP: ${RTC_PUBLIC_IP}
       TRUST_PROXY: ${TRUST_PROXY}
       GEOIP_CITY: ${GEOIP_CITY}
+      MAX_STREAMS_PER_IP: ${MAX_STREAMS_PER_IP}
     volumes:
       - geoip:/data
     ulimits:

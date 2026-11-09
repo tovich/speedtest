@@ -45,6 +45,7 @@ type config struct {
 	GeoCity        bool
 	RTCPort        int
 	RTCPublicIP    string
+	MaxPerIP       int // одновременных потоков загрузки/отдачи с одного адреса, 0 — без ограничения
 }
 
 func env(key, def string) string {
@@ -64,6 +65,10 @@ func envBool(key string, def bool) bool {
 
 func loadConfig() config {
 	port, _ := strconv.Atoi(env("RTC_UDP_PORT", "3479"))
+	perIP, err := strconv.Atoi(env("MAX_STREAMS_PER_IP", "32"))
+	if err != nil || perIP < 0 {
+		perIP = 32
+	}
 	return config{
 		Addr:           env("LISTEN_ADDR", ":8080"),
 		DataDir:        env("DATA_DIR", "/data"),
@@ -73,6 +78,7 @@ func loadConfig() config {
 		GeoCity:        envBool("GEOIP_CITY", true),
 		RTCPort:        port,
 		RTCPublicIP:    env("RTC_PUBLIC_IP", ""),
+		MaxPerIP:       perIP,
 	}
 }
 
@@ -82,6 +88,12 @@ type server struct {
 	rtc     *rtcServer
 	uploads *uploadRegistry
 	noise   []byte
+
+	// Ограничения одновременных соединений: один тест — 6 потоков загрузки или 4 отдачи,
+	// 1 WebSocket и 1 WebRTC; запас — на несколько абонентов за одним NAT.
+	streams *ipLimiter // загрузка и отдача
+	sockets *ipLimiter // WebSocket
+	peers   *ipLimiter // WebRTC: каждое соединение живёт до минуты
 }
 
 func main() {
@@ -93,6 +105,9 @@ func main() {
 	defer stop()
 
 	s := &server{cfg: cfg, noise: make([]byte, 1<<20), uploads: newUploadRegistry()}
+	s.streams = newIPLimiter(cfg.MaxPerIP, 0)
+	s.sockets = newIPLimiter(cfg.MaxPerIP/2, maxUploadCounters)
+	s.peers = newIPLimiter(cfg.MaxPerIP/4, 500)
 	rand.Read(s.noise) // несжимаемые данные для теста загрузки
 
 	s.geo = NewGeoDB(cfg.DataDir, cfg.GeoCity)
@@ -111,9 +126,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/info", s.handleInfo)
-	mux.HandleFunc("GET /api/download", s.handleDownload)
-	mux.HandleFunc("POST /api/upload", s.handleUpload)
-	mux.HandleFunc("GET /api/ws", s.handleWS)
+	mux.HandleFunc("GET /api/download", s.limited(s.streams, s.handleDownload))
+	mux.HandleFunc("POST /api/upload", s.limited(s.streams, s.handleUpload))
+	mux.HandleFunc("GET /api/ws", s.limited(s.sockets, s.handleWS))
 	mux.HandleFunc("POST /api/rtc", s.handleRTC)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
 	mux.Handle("GET /", static)

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -104,6 +105,22 @@ func (s *server) handleRTC(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad offer", http.StatusBadRequest)
 		return
 	}
+	// место в лимите занято, пока живёт соединение, а не только на время запроса
+	ip := s.clientIP(r)
+	if !s.peers.acquire(ip) {
+		tooMany(w)
+		return
+	}
+	var pc *webrtc.PeerConnection
+	var once sync.Once
+	closePC := func() {
+		once.Do(func() {
+			if pc != nil {
+				pc.Close()
+			}
+			s.peers.release(ip)
+		})
+	}
 
 	var se webrtc.SettingEngine
 	se.SetLite(true)
@@ -117,14 +134,16 @@ func (s *server) handleRTC(w http.ResponseWriter, r *http.Request) {
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(se))
 	pc, err := api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
+		closePC()
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Тест длится пару секунд; страхуемся от брошенных соединений.
-	time.AfterFunc(60*time.Second, func() { pc.Close() })
+	time.AfterFunc(60*time.Second, closePC)
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
-		if st == webrtc.PeerConnectionStateFailed || st == webrtc.PeerConnectionStateDisconnected {
-			pc.Close()
+		switch st {
+		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateDisconnected, webrtc.PeerConnectionStateClosed:
+			go closePC() // не из обработчика pion: Close ждёт завершения его горутин
 		}
 	})
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
@@ -132,7 +151,7 @@ func (s *server) handleRTC(w http.ResponseWriter, r *http.Request) {
 	})
 
 	fail := func(err error) {
-		pc.Close()
+		closePC()
 		log.Printf("webrtc: %v", err)
 		http.Error(w, "webrtc negotiation failed", http.StatusBadRequest)
 	}
