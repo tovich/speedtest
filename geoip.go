@@ -20,6 +20,9 @@ import (
 // Базы DB-IP Lite (CC BY 4.0) обновляются раз в месяц и скачиваются без ключа.
 const dbipURL = "https://download.db-ip.com/free/dbip-%s-lite-%s.mmdb.gz"
 
+// Самая большая база (города) — около 130 МБ; предел защищает том от переполнения.
+const maxDBSize = 1 << 30
+
 type GeoInfo struct {
 	CountryCode   string  `json:"countryCode,omitempty"`
 	Country       string  `json:"country,omitempty"`
@@ -182,7 +185,10 @@ func fetchGz(url, dst string) error {
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(f, zr)
+	n, err := io.Copy(f, io.LimitReader(zr, maxDBSize+1))
+	if err == nil && n > maxDBSize {
+		err = fmt.Errorf("%s: база больше %d МБ", url, maxDBSize>>20)
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

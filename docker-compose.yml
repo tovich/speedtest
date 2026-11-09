@@ -28,6 +28,11 @@ services:
       - geoip:/data
     ulimits:
       nofile: 65536
+    # контейнеру не нужны запись в свою файловую систему (базы GeoIP лежат в томе) и привилегии
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
 
   # HTTPS + HTTP/2/3 через Caddy с автоматическим сертификатом Let's Encrypt.
   # Запуск: DOMAIN=speed.example.com TRUST_PROXY=true HTTP_BIND=127.0.0.1 docker compose --profile tls up -d

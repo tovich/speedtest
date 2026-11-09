@@ -96,6 +96,9 @@ SERVER_LOCATION="${SERVER_LOCATION//[\"\$\`\\]/}"
 # ---- удаление ----
 if [[ $ACTION == uninstall ]]; then
   [[ -d "$DIR" ]] || die "Speedtest не найден в $DIR"
+  # удаляем каталог целиком — только если его создал этот установщик
+  grep -qs '^# Создано install.sh' "$DIR/docker-compose.yml" \
+    || die "в $DIR нет установки Speedtest (нет docker-compose.yml от install.sh) — каталог не тронут"
   log "Останавливаю и удаляю контейнеры и данные…"
   (cd "$DIR" && docker compose down -v --remove-orphans) || true
   rm -rf "$DIR"
@@ -207,6 +210,10 @@ EOF
       - geoip:/data
     ulimits:
       nofile: 65536
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
     healthcheck:
       test: ["CMD", "/speedtest", "healthcheck"]
       interval: 10s

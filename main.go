@@ -380,6 +380,29 @@ func newStatic() (staticHandler, error) {
 	return files, err
 }
 
+// csp разрешает странице только собственные скрипты, стили и запросы к своему же серверу.
+// Адрес WebSocket указан явно: не все браузеры относят ws:// и wss:// к 'self'.
+func csp(host string) string {
+	connect := "'self'"
+	if validHost(host) {
+		connect += " ws://" + host + " wss://" + host
+	}
+	return "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src " + connect +
+		"; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+}
+
+func validHost(h string) bool {
+	if h == "" || len(h) > 255 {
+		return false
+	}
+	for _, c := range h {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune(".-:[]", c)) {
+			return false
+		}
+	}
+	return true
+}
+
 func (h staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 	if p == "/" {
@@ -396,6 +419,9 @@ func (h staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hd.Set("Cache-Control", "no-cache")
 	hd.Set("Vary", "Accept-Encoding")
 	hd.Set("X-Content-Type-Options", "nosniff")
+	hd.Set("X-Frame-Options", "DENY")
+	hd.Set("Referrer-Policy", "same-origin")
+	hd.Set("Content-Security-Policy", csp(r.Host))
 	if r.Header.Get("If-None-Match") == f.etag {
 		w.WriteHeader(http.StatusNotModified)
 		return

@@ -1,0 +1,13 @@
+# Обновления зависимостей приходят pull request'ами: actions и базовые образы закреплены
+# по хешам, без этого они не получали бы исправлений.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: weekly }

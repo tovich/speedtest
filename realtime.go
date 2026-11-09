@@ -7,7 +7,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -72,6 +74,8 @@ func newRTCServer(port int, publicIP string) (*rtcServer, error) {
 
 // candidateIPs — какие адреса сообщить клиенту: RTC_PUBLIC_IP, иначе адрес из заголовка Host
 // (контейнер за NAT docker не знает свой внешний адрес, а клиент пришёл именно на Host).
+// Host присылает клиент, поэтому адреса из сетей самого сервера (в docker это внутренние
+// сети контейнеров) отбрасываются: иначе по имени соседнего контейнера можно узнать его IP.
 func (s *rtcServer) candidateIPs(r *http.Request) []string {
 	if s.publicIP != "" {
 		return []string{s.publicIP}
@@ -80,16 +84,46 @@ func (s *rtcServer) candidateIPs(r *http.Request) []string {
 	if err != nil {
 		host = r.Host
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-	defer cancel()
-	addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-	if err != nil {
+	if !validHost(host) {
 		return nil
 	}
+	var addrs []netip.Addr
+	if a, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
+		addrs = []netip.Addr{a}
+	} else {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if addrs, err = net.DefaultResolver.LookupNetIP(ctx, "ip", host); err != nil {
+			return nil
+		}
+	}
+	local := localNets()
 	var out []string
+next:
 	for _, a := range addrs {
-		if !a.IsLoopback() {
-			out = append(out, a.Unmap().String())
+		a = a.Unmap()
+		if a.IsLoopback() || a.IsUnspecified() || a.IsMulticast() {
+			continue
+		}
+		for _, p := range local {
+			if p.Contains(a) {
+				continue next
+			}
+		}
+		out = append(out, a.String())
+	}
+	return out
+}
+
+// localNets — сети, к которым сервер подключён напрямую.
+func localNets() []netip.Prefix {
+	ifaddrs, _ := net.InterfaceAddrs()
+	var out []netip.Prefix
+	for _, ia := range ifaddrs {
+		if n, ok := ia.(*net.IPNet); ok {
+			if p, err := netip.ParsePrefix(n.String()); err == nil && !p.Addr().IsLoopback() {
+				out = append(out, p.Masked())
+			}
 		}
 	}
 	return out
