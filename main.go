@@ -34,6 +34,8 @@ var webFS embed.FS
 const (
 	maxDownload = 1 << 30   // 1 ГБ на один запрос
 	maxUpload   = 256 << 20 // 256 МБ на один запрос
+	// Фаза теста длится 10 с; дольше минуты поток держит только зависший или вредящий клиент.
+	maxStreamTime = 60 * time.Second
 )
 
 type config struct {
@@ -46,6 +48,7 @@ type config struct {
 	RTCPort        int
 	RTCPublicIP    string
 	MaxPerIP       int // одновременных потоков загрузки/отдачи с одного адреса, 0 — без ограничения
+	MaxTotal       int // то же со всех адресов, 0 — без ограничения
 }
 
 func env(key, def string) string {
@@ -69,6 +72,10 @@ func loadConfig() config {
 	if err != nil || perIP < 0 {
 		perIP = 32
 	}
+	total, err := strconv.Atoi(env("MAX_STREAMS_TOTAL", "500"))
+	if err != nil || total < 0 {
+		total = 500
+	}
 	return config{
 		Addr:           env("LISTEN_ADDR", ":8080"),
 		DataDir:        env("DATA_DIR", "/data"),
@@ -79,6 +86,7 @@ func loadConfig() config {
 		RTCPort:        port,
 		RTCPublicIP:    env("RTC_PUBLIC_IP", ""),
 		MaxPerIP:       perIP,
+		MaxTotal:       total,
 	}
 }
 
@@ -105,7 +113,7 @@ func main() {
 	defer stop()
 
 	s := &server{cfg: cfg, noise: make([]byte, 1<<20), uploads: newUploadRegistry()}
-	s.streams = newIPLimiter(cfg.MaxPerIP, 0)
+	s.streams = newIPLimiter(cfg.MaxPerIP, cfg.MaxTotal)
 	s.sockets = newIPLimiter(cfg.MaxPerIP/2, maxUploadCounters)
 	s.peers = newIPLimiter(cfg.MaxPerIP/4, 500)
 	rand.Read(s.noise) // несжимаемые данные для теста загрузки
@@ -126,10 +134,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/info", s.handleInfo)
-	mux.HandleFunc("GET /api/download", s.limited(s.streams, s.handleDownload))
-	mux.HandleFunc("POST /api/upload", s.limited(s.streams, s.handleUpload))
+	mux.HandleFunc("GET /api/download", sameOrigin(s.limited(s.streams, s.handleDownload)))
+	mux.HandleFunc("POST /api/upload", sameOrigin(s.limited(s.streams, s.handleUpload)))
 	mux.HandleFunc("GET /api/ws", s.limited(s.sockets, s.handleWS))
-	mux.HandleFunc("POST /api/rtc", s.handleRTC)
+	mux.HandleFunc("POST /api/rtc", sameOrigin(s.handleRTC))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
 	mux.Handle("GET /", static)
 
@@ -238,6 +246,10 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		size = 25 << 20
 	}
 	size = min(size, maxDownload)
+	// срок сбрасываем сами: без WriteTimeout сервер не делает этого между запросами соединения
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Now().Add(maxStreamTime))
+	defer rc.SetWriteDeadline(time.Time{})
 	noStore(w)
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
@@ -255,6 +267,9 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 // по WebSocket, принятые байты складываются в него — страница спрашивает его по тому же сокету.
 func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	rc := http.NewResponseController(w)
+	rc.SetReadDeadline(start.Add(maxStreamTime))
+	defer rc.SetReadDeadline(time.Time{})
 	var body io.Reader = http.MaxBytesReader(w, r.Body, maxUpload)
 	if c := s.uploads.get(r.URL.Query().Get("id")); c != nil {
 		body = countingReader{body, c}

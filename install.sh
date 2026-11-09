@@ -26,7 +26,9 @@ usage() {
   --domain ДОМЕН         HTTPS с сертификатом Let's Encrypt (встроенный Caddy, нужны свободные 80 и 443)
   --proxy-network СЕТЬ   подключить к docker-сети своего прокси (например, Nginx Proxy Manager);
                          HTTP-порт наружу не публикуется, в прокси указать speedtest:8080
-  --behind-proxy         сервис стоит за прокси: IP клиента брать из X-Forwarded-For
+  --behind-proxy         сервис стоит за прокси: IP клиента брать из X-Forwarded-For;
+                         HTTP-порт слушает только на 127.0.0.1 (другой адрес — через --bind)
+  --bind АДРЕС           IPv4-адрес сервера, на котором слушать HTTP-порт
   --direct               сбросить режимы домена/прокси: прямой доступ по HTTP-порту
   --port ПОРТ            HTTP-порт (по умолчанию 8080)
   --udp-port ПОРТ        UDP-порт теста потерь пакетов (по умолчанию 3479)
@@ -47,14 +49,14 @@ main() {
 
 # ---- настройки: сначала прошлые из .env, поверх — параметры командной строки ----
 HTTP_PORT=8080 RTC_UDP_PORT=3479 SERVER_NAME=Speedtest SERVER_LOCATION="" RTC_PUBLIC_IP=""
-TRUST_PROXY=false GEOIP_CITY=true DOMAIN="" PROXY_NETWORK="" MAX_STREAMS_PER_IP=32
+TRUST_PROXY=false GEOIP_CITY=true DOMAIN="" PROXY_NETWORK="" MAX_STREAMS_PER_IP=32 MAX_STREAMS_TOTAL=500 HTTP_BIND=""
 
 if [[ -f "$DIR/.env" ]]; then
   while IFS='=' read -r k v; do
     [[ "$k" =~ ^[A-Z_]+$ ]] || continue
     v="${v%\"}"; v="${v#\"}"
     case "$k" in
-      HTTP_PORT|RTC_UDP_PORT|SERVER_NAME|SERVER_LOCATION|RTC_PUBLIC_IP|TRUST_PROXY|GEOIP_CITY|DOMAIN|PROXY_NETWORK|MAX_STREAMS_PER_IP) printf -v "$k" '%s' "$v" ;;
+      HTTP_PORT|RTC_UDP_PORT|SERVER_NAME|SERVER_LOCATION|RTC_PUBLIC_IP|TRUST_PROXY|GEOIP_CITY|DOMAIN|PROXY_NETWORK|MAX_STREAMS_PER_IP|MAX_STREAMS_TOTAL|HTTP_BIND) printf -v "$k" '%s' "$v" ;;
     esac
   done < "$DIR/.env"
 fi
@@ -66,7 +68,8 @@ while [[ $# -gt 0 ]]; do
     --domain)        need "$@"; DOMAIN="$2"; shift 2 ;;
     --proxy-network) need "$@"; PROXY_NETWORK="$2"; shift 2 ;;
     --behind-proxy)  TRUST_PROXY=true; shift ;;
-    --direct)        DOMAIN=""; PROXY_NETWORK=""; TRUST_PROXY=false; shift ;;
+    --bind)          need "$@"; HTTP_BIND="$2"; shift 2 ;;
+    --direct)        DOMAIN=""; PROXY_NETWORK=""; TRUST_PROXY=false; HTTP_BIND=""; shift ;;
     --port)          need "$@"; HTTP_PORT="$2"; shift 2 ;;
     --udp-port)      need "$@"; RTC_UDP_PORT="$2"; shift 2 ;;
     --name)          need "$@"; SERVER_NAME="$2"; shift 2 ;;
@@ -82,6 +85,8 @@ done
 [[ $EUID -eq 0 ]] || die "нужны права root: запустите через sudo"
 [[ "$HTTP_PORT" =~ ^[0-9]+$ && "$RTC_UDP_PORT" =~ ^[0-9]+$ ]] || die "порт должен быть числом"
 [[ "$MAX_STREAMS_PER_IP" =~ ^[0-9]+$ ]] || MAX_STREAMS_PER_IP=32
+[[ "$MAX_STREAMS_TOTAL" =~ ^[0-9]+$ ]] || MAX_STREAMS_TOTAL=500
+[[ -z "$HTTP_BIND" || "$HTTP_BIND" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || die "некорректный адрес для --bind: $HTTP_BIND (нужен IPv4)"
 [[ -z "$DOMAIN" || "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || die "некорректный домен: $DOMAIN"
 [[ -z "$PROXY_NETWORK" || "$PROXY_NETWORK" =~ ^[A-Za-z0-9_.-]+$ ]] || die "некорректное имя сети: $PROXY_NETWORK"
 # в .env значения в кавычках — убираем то, что может их сломать
@@ -138,6 +143,17 @@ if [[ -n "$DOMAIN" ]]; then
   fi
 fi
 
+# За внешним прокси IP клиента берётся из X-Forwarded-For. Прямой доступ к порту позволил бы
+# подставить любой адрес, поэтому порт слушает только там, откуда приходит прокси.
+BEHIND_PROXY=false
+if [[ -z "$DOMAIN$PROXY_NETWORK" && "$TRUST_PROXY" == true ]]; then
+  BEHIND_PROXY=true
+  if [[ -z "$HTTP_BIND" ]]; then
+    HTTP_BIND=127.0.0.1
+    warn "Режим --behind-proxy: HTTP-порт слушает только на 127.0.0.1. Если прокси на другом сервере, укажите --bind АДРЕС и закройте порт файрволом для всех, кроме прокси."
+  fi
+fi
+
 # Подсказка, если на сервере уже есть Nginx Proxy Manager
 if [[ -z "$DOMAIN$PROXY_NETWORK" ]]; then
   npm=$(docker ps --format '{{.Names}} {{.Image}}' 2>/dev/null | awk '/nginx-proxy-manager/ {print $1; exit}')
@@ -160,6 +176,8 @@ RTC_PUBLIC_IP=$RTC_PUBLIC_IP
 TRUST_PROXY=$TRUST_PROXY
 GEOIP_CITY=$GEOIP_CITY
 MAX_STREAMS_PER_IP=$MAX_STREAMS_PER_IP
+MAX_STREAMS_TOTAL=$MAX_STREAMS_TOTAL
+HTTP_BIND=$HTTP_BIND
 DOMAIN=$DOMAIN
 PROXY_NETWORK=$PROXY_NETWORK
 EOF
@@ -173,7 +191,7 @@ services:
     restart: unless-stopped
     ports:
 EOF
-  [[ -z "$DOMAIN$PROXY_NETWORK" ]] && echo '      - "${HTTP_PORT}:8080"'
+  [[ -z "$DOMAIN$PROXY_NETWORK" ]] && echo '      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT}:8080"'
   cat <<'EOF'
       - "${RTC_UDP_PORT}:${RTC_UDP_PORT}/udp"
     environment:
@@ -184,6 +202,7 @@ EOF
       TRUST_PROXY: ${TRUST_PROXY}
       GEOIP_CITY: ${GEOIP_CITY}
       MAX_STREAMS_PER_IP: ${MAX_STREAMS_PER_IP}
+      MAX_STREAMS_TOTAL: ${MAX_STREAMS_TOTAL}
     volumes:
       - geoip:/data
     ulimits:
@@ -258,7 +277,7 @@ open_port() {
 }
 open_port "$RTC_UDP_PORT/udp"
 if [[ -n "$DOMAIN" ]]; then open_port 80/tcp; open_port 443/tcp
-elif [[ -z "$PROXY_NETWORK" ]]; then open_port "$HTTP_PORT/tcp"
+elif [[ -z "$PROXY_NETWORK" && $BEHIND_PROXY == false ]]; then open_port "$HTTP_PORT/tcp"
 fi
 
 # ---- запуск ----
@@ -284,6 +303,8 @@ if [[ -n "$DOMAIN" ]]; then
 elif [[ -n "$PROXY_NETWORK" ]]; then
   echo "  В прокси создайте хост: http://speedtest:8080, включите Websockets Support, выключите HTTP/2,"
   echo "  в Advanced добавьте: client_max_body_size 0; client_body_buffer_size 1m; proxy_buffering off; proxy_request_buffering off;"
+elif [[ $BEHIND_PROXY == true ]]; then
+  echo "  Сервис слушает на $HTTP_BIND:$HTTP_PORT — направьте на него свой прокси (с поддержкой WebSocket, без HTTP/2 и буферизации)."
 else
   echo "  Адрес: http://${ip:-<IP сервера>}:$HTTP_PORT"
 fi

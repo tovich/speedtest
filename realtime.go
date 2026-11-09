@@ -125,6 +125,7 @@ func (s *server) handleRTC(w http.ResponseWriter, r *http.Request) {
 	var se webrtc.SettingEngine
 	se.SetLite(true)
 	se.SetICEUDPMux(s.rtc.mux)
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled) // серверу не нужен, лишний разбор чужих пакетов
 	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6})
 	if ips := s.rtc.candidateIPs(r); len(ips) > 0 {
 		se.SetNAT1To1IPs(ips, webrtc.ICECandidateTypeHost)
@@ -135,11 +136,18 @@ func (s *server) handleRTC(w http.ResponseWriter, r *http.Request) {
 	pc, err := api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		closePC()
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("webrtc: %v", err)
+		http.Error(w, "webrtc unavailable", http.StatusInternalServerError)
 		return
 	}
-	// Тест длится пару секунд; страхуемся от брошенных соединений.
+	// Тест длится пару секунд; страхуемся от брошенных соединений. Не установленное за 15 с
+	// закрываем раньше: иначе пустые запросы надолго занимают общий лимит.
 	time.AfterFunc(60*time.Second, closePC)
+	time.AfterFunc(15*time.Second, func() {
+		if pc.ConnectionState() != webrtc.PeerConnectionStateConnected {
+			closePC()
+		}
+	})
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
 		switch st {
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateDisconnected, webrtc.PeerConnectionStateClosed:

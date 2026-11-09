@@ -428,7 +428,7 @@ async function measureDownload(onTick) {
   await sleep(CFG.phaseMs);
   ctrl.abort();
   await Promise.allSettled(workers);
-  if (!okCount) throw new Error(`загрузка не удалась${errStatus ? ' (HTTP ' + errStatus + ')' : ''}${errStatus === 429 ? ': слишком много одновременных тестов с вашего адреса' : ''}`);
+  if (!okCount) throw new Error(`загрузка не удалась${errStatus ? ' (HTTP ' + errStatus + ')' : ''}${errStatus === 429 ? ': сервер занят или слишком много тестов с вашего адреса' : ''}`);
   return { ...tr.finish(), ttfb: median(ttfb) };
 }
 
@@ -515,7 +515,7 @@ async function measureUpload(onTick, pinger) {
   live.forEach(x => x.abort());
   await Promise.allSettled(workers);
   // медленный канал может не успеть завершить ни одного запроса — это не ошибка
-  if (errStatus && !okCount) throw new Error(`отдача не удалась (HTTP ${errStatus})${errStatus === 413 ? ': на прокси нужен client_max_body_size 0' : errStatus === 429 ? ': слишком много одновременных тестов с вашего адреса' : ''}`);
+  if (errStatus && !okCount) throw new Error(`отдача не удалась (HTTP ${errStatus})${errStatus === 413 ? ': на прокси нужен client_max_body_size 0' : errStatus === 429 ? ': сервер занят или слишком много тестов с вашего адреса' : ''}`);
   if (useSrv && (rs.bytes > 0 || !rw.bytes)) return { ...rs, src: 'server' };
   if (srvId) console.warn('отдача: счётчик сервера недоступен или пуст, использован прогресс браузера', { server: rs, browser: rw });
   return { ...rw, src: 'browser' };
