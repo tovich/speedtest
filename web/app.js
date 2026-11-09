@@ -260,7 +260,11 @@ class Pinger {
       ws.onopen = () => { clearTimeout(timer); resolve(); };
       ws.onerror = () => { clearTimeout(timer); reject(new Error('ws error')); };
       ws.onmessage = e => {
-        if (e.data[0] === 'u') { this.onUpload?.(+e.data.slice(e.data.indexOf(':') + 1)); return; }
+        if (e.data[0] === 'u') {
+          const m = /^u([0-9a-f]+):(\d+)$/.exec(e.data);
+          this.onUpload?.(m && { id: m[1], n: +m[2] });
+          return;
+        }
         const t1 = now();
         const cb = this.pending.get(+e.data);
         if (cb) { this.pending.delete(+e.data); cb(t1); }
@@ -362,9 +366,11 @@ async function measureUdp(view) {
 }
 
 // ---------- загрузка ----------
+// onTick необязателен; текущая скорость доступна и как tracker.mbps
 function speedTracker(onTick) {
   const t0 = now();
   let bytes = 0, peak = 0, tSet = null;
+  const api = { mbps: 0 };
   const samples = [[0, 0]];
   const iv = setInterval(() => {
     const t = now() - t0;
@@ -375,21 +381,23 @@ function speedTracker(onTick) {
     const [tw, bw] = samples[j];
     const mbps = t > tw ? (bytes - bw) * 8 / (t - tw) / 1000 : 0;
     if (t >= CFG.graceMs + 1000) peak = Math.max(peak, mbps); // окно целиком после разгона
-    onTick(mbps, t);
+    api.mbps = mbps;
+    onTick?.(mbps, t);
   }, 100);
-  return {
+  return Object.assign(api, {
     add(n) { bytes += n; },
     // абсолютный счётчик от сервера; итог считается на момент последнего ответа
     set(n) { if (n >= bytes) { bytes = n; tSet = now() - t0; } },
     finish() {
       clearInterval(iv);
       const tEnd = tSet ?? now() - t0;
-      samples.push([tEnd, bytes]);
-      const g = samples.find(s => s[0] >= CFG.graceMs) || samples[0];
+      const s = samples.filter(x => x[0] <= tEnd);
+      s.push([tEnd, bytes]);
+      const g = s.find(x => x[0] >= CFG.graceMs) || s[0];
       const avg = tEnd > g[0] ? (bytes - g[1]) * 8 / (tEnd - g[0]) / 1000 : 0;
       return { mbps: avg, peak: Math.max(peak, avg), bytes };
     },
-  };
+  });
 }
 
 async function measureDownload(onTick) {
@@ -434,34 +442,54 @@ function getUploadBlob() {
   return uploadBlob;
 }
 
+// Отдачу считают два источника: сервер (принятые байты, по WebSocket) и браузер (прогресс
+// отправки XHR, с ложным всплеском в начале). Основной — сервер; браузер — запасной, если
+// счётчик не выдан, сокет оборвался, ответы перестали приходить или сервер не получил
+// ни байта (прокси с буферизацией тела запроса).
 async function measureUpload(onTick, pinger) {
   const blob = getUploadBlob();
-  const tr = speedTracker(onTick);
+  const ws = pinger?.ws;
+  let srvId = '';
+  if (ws?.readyState === 1) {
+    const r = await new Promise(resolve => {
+      pinger.onUpload = resolve;
+      ws.send('u');
+      setTimeout(() => resolve(null), 2000);
+    });
+    srvId = r?.id || '';
+  }
+  const t0 = now();
+  const srv = speedTracker(), web = speedTracker();
+  let srvAt = -Infinity, polled = -Infinity;
+  const srvLive = () => !!srvId && ws.readyState === 1 && now() - srvAt < 1000;
+  let poll;
+  if (srvId) {
+    pinger.onUpload = r => { if (r?.id === srvId) { srv.set(r.n); srvAt = now(); polled = -Infinity; } };
+    // новый запрос — только после ответа на предыдущий (или через секунду без ответа),
+    // чтобы не забивать сокет, по которому идёт пинг под нагрузкой
+    poll = setInterval(() => {
+      if (ws.readyState === 1 && now() - polled > 1000) { polled = now(); ws.send('u'); }
+    }, 100);
+  }
+  const tick = setInterval(() => onTick((srvLive() ? srv : web).mbps, now() - t0), 100);
+
   const live = new Set();
   let stop = false, errStatus = 0, okCount = 0;
-  // байты, принятые сервером, — по WebSocket; без него — прогресс XHR (с ложным всплеском в начале)
-  const id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-  const bySrv = pinger?.ws?.readyState === 1;
-  let poll;
-  if (bySrv) {
-    pinger.onUpload = n => tr.set(n);
-    poll = setInterval(() => { if (pinger.ws.readyState === 1) pinger.ws.send('u' + id); }, 100);
-  }
   const worker = () => new Promise(resolve => {
     const next = () => {
       if (stop) return resolve();
       const xhr = new XMLHttpRequest();
       let last = 0;
-      if (!bySrv) xhr.upload.onprogress = e => { tr.add(e.loaded - last); last = e.loaded; };
+      xhr.upload.onprogress = e => { web.add(e.loaded - last); last = e.loaded; };
       xhr.onloadend = () => {
         live.delete(xhr);
         if (stop) return resolve();
-        if (xhr.status === 200) { okCount++; if (!bySrv) tr.add(blob.size - last); return next(); }
+        if (xhr.status === 200) { okCount++; web.add(blob.size - last); return next(); }
         errStatus = xhr.status || errStatus;
-        if (!bySrv) tr.add(-last); // отвергнутый запрос — не трафик
+        web.add(-last); // отвергнутый запрос — не трафик
         setTimeout(next, 200);
       };
-      xhr.open('POST', `/api/upload?id=${id}&n=${Math.random()}`);
+      xhr.open('POST', `/api/upload?id=${srvId}&n=${Math.random()}`);
       live.add(xhr);
       xhr.send(blob);
     };
@@ -471,13 +499,26 @@ async function measureUpload(onTick, pinger) {
   await sleep(CFG.phaseMs);
   stop = true;
   clearInterval(poll);
-  if (bySrv) pinger.onUpload = null;
-  const res = tr.finish();
+  clearInterval(tick);
+  // свежий счётчик на момент окончания
+  if (srvLive()) {
+    await new Promise(resolve => {
+      const prev = pinger.onUpload;
+      pinger.onUpload = r => { prev(r); resolve(); };
+      ws.send('u');
+      setTimeout(resolve, 500);
+    });
+  }
+  const useSrv = srvLive();
+  if (srvId) pinger.onUpload = null;
+  const rs = srv.finish(), rw = web.finish();
   live.forEach(x => x.abort());
   await Promise.allSettled(workers);
   // медленный канал может не успеть завершить ни одного запроса — это не ошибка
   if (errStatus && !okCount) throw new Error(`отдача не удалась (HTTP ${errStatus})${errStatus === 413 ? ': на прокси нужен client_max_body_size 0' : ''}`);
-  return res;
+  if (useSrv && (rs.bytes > 0 || !rw.bytes)) return { ...rs, src: 'server' };
+  if (srvId) console.warn('отдача: счётчик сервера недоступен или пуст, использован прогресс браузера', { server: rs, browser: rw });
+  return { ...rw, src: 'browser' };
 }
 
 // протокол, по которому браузер ходит к серверу
@@ -803,7 +844,7 @@ async function runTest() {
     res.up = up.mbps;
     res.loadedUp = median(loadedUp);
     headline.up.set(up.mbps);
-    setMetric('up', fmtSpeed(up.mbps), `пик ${fmtSpeed(up.peak)} Мбит/с · ${CFG.upStreams} потока`);
+    setMetric('up', fmtSpeed(up.mbps), `пик ${fmtSpeed(up.peak)} Мбит/с · ${CFG.upStreams} потока${up.src === 'browser' ? ' · по данным браузера' : ''}`);
     setMetric('loadedUp', fmtMs(res.loadedUp), ok(res.loadedUp) ? `+${fmtMs(Math.max(0, res.loadedUp - res.ping))} мс к покою · джиттер ${fmtMs(jitterOf(loadedUp))}` : '');
     steps.done('up');
 

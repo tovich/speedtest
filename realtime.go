@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -16,8 +17,9 @@ import (
 )
 
 // handleWS — эхо по WebSocket для измерения задержки (в покое и под нагрузкой).
-// Сообщение «u<id теста>» — запрос счётчика отдачи, ответ «u<id>:<принято байт>».
-func handleWS(w http.ResponseWriter, r *http.Request) {
+// Текстовое сообщение «u» — счётчик отдачи этого соединения: при первом запросе сервер его
+// заводит, ответ «u<id>:<принято байт>»; если счётчиков слишком много — просто «u».
+func (s *server) handleWS(w http.ResponseWriter, r *http.Request) {
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		return
@@ -26,17 +28,25 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	c.SetReadLimit(1024)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
+	var upID string
+	var up *atomic.Int64
+	defer func() {
+		if upID != "" {
+			s.uploads.remove(upID)
+		}
+	}()
 	for {
 		typ, msg, err := c.Read(ctx)
 		if err != nil {
 			return
 		}
-		if typ == websocket.MessageText && len(msg) > 1 && msg[0] == 'u' {
-			var n int64
-			if uc := uploads.get(string(msg[1:]), false); uc != nil {
-				n = uc.n.Load()
+		if typ == websocket.MessageText && string(msg) == "u" {
+			if up == nil {
+				upID, up = s.uploads.create()
 			}
-			msg = strconv.AppendInt(append(msg, ':'), n, 10)
+			if up != nil {
+				msg = strconv.AppendInt(append(append(msg, upID...), ':'), up.Load(), 10)
+			}
 		}
 		if err := c.Write(ctx, typ, msg); err != nil {
 			return

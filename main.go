@@ -77,10 +77,11 @@ func loadConfig() config {
 }
 
 type server struct {
-	cfg   config
-	geo   *GeoDB
-	rtc   *rtcServer
-	noise []byte
+	cfg     config
+	geo     *GeoDB
+	rtc     *rtcServer
+	uploads *uploadRegistry
+	noise   []byte
 }
 
 func main() {
@@ -91,12 +92,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	s := &server{cfg: cfg, noise: make([]byte, 1<<20)}
+	s := &server{cfg: cfg, noise: make([]byte, 1<<20), uploads: newUploadRegistry()}
 	rand.Read(s.noise) // несжимаемые данные для теста загрузки
 
 	s.geo = NewGeoDB(cfg.DataDir, cfg.GeoCity)
 	go s.geo.Run(ctx)
-	go uploads.cleanup(ctx)
 
 	rtc, err := newRTCServer(cfg.RTCPort, cfg.RTCPublicIP)
 	if err != nil {
@@ -113,7 +113,7 @@ func main() {
 	mux.HandleFunc("GET /api/info", s.handleInfo)
 	mux.HandleFunc("GET /api/download", s.handleDownload)
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
-	mux.HandleFunc("GET /api/ws", handleWS)
+	mux.HandleFunc("GET /api/ws", s.handleWS)
 	mux.HandleFunc("POST /api/rtc", s.handleRTC)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") })
 	mux.Handle("GET /", static)
@@ -236,13 +236,13 @@ func (s *server) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleUpload читает тело запроса и выбрасывает его. Если передан id теста,
-// принятые байты складываются в его счётчик — страница спрашивает его по WebSocket.
+// handleUpload читает тело запроса и выбрасывает его. Если передан id счётчика, выданный
+// по WebSocket, принятые байты складываются в него — страница спрашивает его по тому же сокету.
 func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	var body io.Reader = http.MaxBytesReader(w, r.Body, maxUpload)
-	if c := uploads.get(r.URL.Query().Get("id"), true); c != nil {
-		body = countingReader{body, &c.n}
+	if c := s.uploads.get(r.URL.Query().Get("id")); c != nil {
+		body = countingReader{body, c}
 	}
 	n, _ := io.Copy(io.Discard, body)
 	writeJSON(w, map[string]any{"bytes": n, "ms": time.Since(start).Milliseconds()})
@@ -251,67 +251,48 @@ func (s *server) handleUpload(w http.ResponseWriter, r *http.Request) {
 // ---- счётчики отдачи ----
 // Браузер сообщает об отправленных байтах, когда кладёт их в буфер системы, а не когда они
 // ушли в сеть: в начале отдачи это даёт ложный всплеск. Поэтому отдачу считает сервер.
+// Счётчик выдаёт сервер по WebSocket и удаляет при закрытии сокета: id случайный и не
+// угадывается, а число счётчиков не больше числа открытых сокетов.
 
-type uploadCounter struct {
-	n    atomic.Int64 // принято байт
-	seen atomic.Int64 // unix-время последнего обращения
-}
+const maxUploadCounters = 10000
 
 type uploadRegistry struct {
 	mu sync.Mutex
-	m  map[string]*uploadCounter
+	m  map[string]*atomic.Int64
 }
 
-var uploads = &uploadRegistry{m: map[string]*uploadCounter{}}
-
-func validTestID(id string) bool {
-	if len(id) < 8 || len(id) > 32 {
-		return false
-	}
-	for _, c := range id {
-		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
-			return false
-		}
-	}
-	return true
+func newUploadRegistry() *uploadRegistry {
+	return &uploadRegistry{m: map[string]*atomic.Int64{}}
 }
 
-func (u *uploadRegistry) get(id string, create bool) *uploadCounter {
-	if !validTestID(id) {
+// create заводит новый счётчик; пустой id — лимит исчерпан.
+func (u *uploadRegistry) create() (string, *atomic.Int64) {
+	var b [16]byte
+	rand.Read(b[:])
+	id := hex.EncodeToString(b[:])
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if len(u.m) >= maxUploadCounters {
+		return "", nil
+	}
+	c := &atomic.Int64{}
+	u.m[id] = c
+	return id, c
+}
+
+func (u *uploadRegistry) get(id string) *atomic.Int64 {
+	if id == "" {
 		return nil
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	c := u.m[id]
-	if c == nil && create && len(u.m) < 10000 {
-		c = &uploadCounter{}
-		u.m[id] = c
-	}
-	if c != nil {
-		c.seen.Store(time.Now().Unix())
-	}
-	return c
+	return u.m[id]
 }
 
-// cleanup удаляет счётчики тестов, к которым не обращались больше двух минут.
-func (u *uploadRegistry) cleanup(ctx context.Context) {
-	t := time.NewTicker(time.Minute)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-		old := time.Now().Add(-2 * time.Minute).Unix()
-		u.mu.Lock()
-		for id, c := range u.m {
-			if c.seen.Load() < old {
-				delete(u.m, id)
-			}
-		}
-		u.mu.Unlock()
-	}
+func (u *uploadRegistry) remove(id string) {
+	u.mu.Lock()
+	delete(u.m, id)
+	u.mu.Unlock()
 }
 
 type countingReader struct {
