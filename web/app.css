@@ -214,7 +214,7 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 650; letter-spacing: -.01em
 .sm b { font-size: 22px; font-weight: 650; }
 .sm > div:last-child { color: var(--muted); }
 .sm > div:last-child b { color: var(--text); }
-.chart-box { position: relative; height: 170px; border-radius: 14px; background: var(--faint); overflow: hidden; }
+.chart-box { position: relative; height: 180px; } /* фон области графика рисуется на canvas: подписи шкалы — снаружи */
 #chart { width: 100%; height: 100%; display: block; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: -8px; font-size: 11.5px; color: var(--muted); }
 .lg::before { content: ""; display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: 3px; }
@@ -322,7 +322,7 @@ footer a { color: inherit; }
   .steps { grid-area: steps; max-width: none; gap: 6px; margin-top: 2px; }
   .headline { grid-area: head; grid-template-columns: minmax(0, 1fr); gap: 8px; align-self: end; }
   .subline { grid-area: sub; grid-template-columns: minmax(0, 1fr); gap: 2px; align-self: start; }
-  .chart-box { grid-area: chart; height: 110px; }
+  .chart-box { grid-area: chart; height: 124px; }
   .chart-legend { grid-area: legend; margin-top: -4px; }
   .again-row { grid-area: again; }
 

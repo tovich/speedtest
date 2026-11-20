@@ -189,6 +189,17 @@ const gauge = {
 };
 
 // ---------- график ----------
+// Верх шкалы скорости — ближайшее сверху число ряда 1–2–5 (…, 50, 100, 200, 500, 1000, …):
+// шкала растёт вместе с замером и всегда занята графиком хотя бы на 40 %.
+// Деления: у 1·10ⁿ и 5·10ⁿ — пять, у 2·10ⁿ — четыре, чтобы шаг был круглым.
+function speedScale(v) {
+  let top;
+  for (let p = 1; !top; p *= 10) top = [1, 2, 5].map(k => k * p).find(x => x >= v);
+  const parts = String(top)[0] === '2' ? 4 : 5;
+  return { top, ticks: Array.from({ length: parts + 1 }, (_, i) => +(top * i / parts).toPrecision(6)) };
+}
+const fmtTick = v => v.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+
 const chart = {
   series: { down: [], up: [], ping: [] },
   dirty: false,
@@ -214,19 +225,45 @@ const chart = {
     if (!w) return;
     if (!this.colors) {
       const css = getComputedStyle(document.documentElement);
-      this.colors = Object.fromEntries(['--faint', '--down', '--up', '--ping'].map(n => [n, css.getPropertyValue(n).trim()]));
+      this.colors = Object.fromEntries(['--faint', '--muted', '--down', '--up', '--ping'].map(n => [n, css.getPropertyValue(n).trim()]));
     }
     const col = n => this.colors[n];
     ctx.clearRect(0, 0, w, h);
-    const pad = 8, top = 12, T = CFG.phaseMs / 1000;
+    const T = CFG.phaseMs / 1000;
     const speeds = [...this.series.down, ...this.series.up].map(p => p[1]);
-    const ymax = Math.max(1, ...speeds) * 1.15;
-    const X = t => pad + (w - 2 * pad) * Math.min(1, t / T);
-    const Y = (v, m) => h - pad - (h - pad - top) * Math.min(1, v / m);
+    // до замера — шкала до 100 Мбит/с, чтобы ось была видна сразу. Выброс до 5 % выше
+    // верхнего деления шкалу не удваивает: линия заходит в запас над ним
+    const over = 1.05;
+    const { top: ymax, ticks } = speedScale(speeds.length ? Math.max(...speeds) / over : 100);
 
+    // слева — колонка подписей шкалы, над ней — единица; справа — область графика
+    const font = '10.5px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+    ctx.font = font;
+    const labels = ticks.map(fmtTick);
+    const gutter = Math.ceil(Math.max(ctx.measureText('1 000').width, ...labels.map(t => ctx.measureText(t).width))) + 8;
+    const top = 24, bottom = 6, inset = 4, headroom = 9; // headroom — запас над верхним делением
+    const x0 = gutter, x1 = w, y0 = top, y1 = h - bottom;
+    const X = t => x0 + inset + (x1 - x0 - 2 * inset) * Math.min(1, t / T);
+    const Y = (v, m) => y1 - (y1 - y0) * Math.min(over, v / m);
+
+    ctx.fillStyle = col('--muted');
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText('Мбит/с', 0, 11);
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    // на низком графике (телефон) подписываем через одну, если строки иначе слипаются
+    const every = (y1 - y0) / (ticks.length - 1) < 15 ? 2 : 1;
+    ticks.forEach((v, i) => { if (i % every === 0 || i === ticks.length - 1) ctx.fillText(labels[i], gutter - 6, Math.round(Y(v, ymax))); });
+
+    // область графика — со скруглённым фоном; всё, что ниже, рисуется только внутри неё
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(x0, y0 - headroom, x1 - x0, y1 - y0 + headroom + bottom, 10);
+    ctx.fillStyle = col('--faint');
+    ctx.fill();
+    ctx.clip();
     ctx.strokeStyle = col('--faint');
     ctx.lineWidth = 1;
-    for (let i = 1; i <= 3; i++) { const y = top + (h - pad - top) * i / 4; ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(w - pad, y); ctx.stroke(); }
+    for (const v of ticks.slice(1)) { const y = Math.round(Y(v, ymax)) + .5; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); }
 
     const line = (pts, color, m, area) => {
       if (pts.length < 2) return;
@@ -234,8 +271,8 @@ const chart = {
       pts.forEach(([t, v], i) => i ? ctx.lineTo(X(t), Y(v, m)) : ctx.moveTo(X(t), Y(v, m)));
       ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
       if (area) {
-        ctx.lineTo(X(pts.at(-1)[0]), h); ctx.lineTo(X(pts[0][0]), h); ctx.closePath();
-        const g = ctx.createLinearGradient(0, top, 0, h);
+        ctx.lineTo(X(pts.at(-1)[0]), y1); ctx.lineTo(X(pts[0][0]), y1); ctx.closePath();
+        const g = ctx.createLinearGradient(0, y0, 0, y1);
         g.addColorStop(0, color + '55'); g.addColorStop(1, color + '00');
         ctx.fillStyle = g; ctx.fill();
       }
@@ -247,6 +284,7 @@ const chart = {
     ctx.fillStyle = col('--ping');
     for (const [t, v] of this.series.ping) { ctx.beginPath(); ctx.arc(X(t), Y(v, pm), 2, 0, 7); ctx.fill(); }
     ctx.globalAlpha = 1;
+    ctx.restore();
   },
 };
 
